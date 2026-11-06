@@ -1,55 +1,77 @@
 #pragma once
-// Signal Sniffer web page. Kept in a separate header because the Arduino
-// sketch preprocessor mishandles large C++ raw-string literals placed in
-// the .ino itself (it tries to compile the HTML/JS as code).
+// Signal Sniffer web page (cyberpunk theme, bloodhound logo embedded as a
+// data URI). Kept in a separate header because the Arduino sketch
+// preprocessor mishandles large C++ raw-string literals in the .ino.
 
 const char INDEX_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Signal Sniffer</title>
 <style>
-  :root{--bg:#0d0b07;--panel:#1a150d;--ink:#f1e6d0;--mute:#b99b5e;--acc:#e8a33d;--line:#3a2f1a;--ok:#5fd37a;--bad:#e05a4a}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-  header{padding:18px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
-  h1{margin:0;font-size:1.3rem;letter-spacing:.15em;color:var(--acc)}
-  .sub{color:var(--mute);font-size:.8rem;margin-top:3px}
-  main{max-width:640px;margin:0 auto;padding:16px}
-  .tabs{display:flex;gap:8px;margin-bottom:16px}
-  .tabs button{flex:1;padding:12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;font-size:1rem;cursor:pointer}
-  .tabs button.active{background:var(--acc);color:#1a1205;font-weight:700;border-color:var(--acc)}
-  .view{display:none}.view.active{display:block}
-  h3{font-size:.95rem;color:var(--mute);margin:18px 0 8px;font-weight:600}
-  .net{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;margin:8px 0;background:var(--panel)}
-  .net .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .net .meta{color:var(--mute);font-size:.78rem;white-space:nowrap}
-  .pick{cursor:pointer}.pick:hover{border-color:var(--acc)}
-  .lock{color:var(--mute);font-size:.8rem;margin-left:6px}
-  .bars{font-family:monospace}
-  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle}
-  /* saved rows with drag + controls */
-  .srow{display:flex;align-items:center;gap:8px;padding:10px 10px;border:1px solid var(--line);border-radius:10px;margin:8px 0;background:var(--panel);touch-action:none}
-  .srow.drag{opacity:.6;border-color:var(--acc)}
-  .srow .handle{cursor:grab;color:var(--mute);font-size:1.2rem;padding:0 4px;user-select:none}
-  .srow .info{flex:1;min-width:0}
-  .srow .nm2{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .srow .sub2{color:var(--mute);font-size:.74rem}
-  .srow .ctl{display:flex;gap:4px}
-  .srow .ctl button{width:30px;height:30px;border:1px solid var(--line);background:#120d06;color:var(--ink);border-radius:7px;cursor:pointer;font-size:.95rem;line-height:1}
-  .srow .ctl .rm{color:var(--bad);border-color:#5a2a22}
-  label{display:block;margin:14px 0 4px;color:var(--mute);font-size:.85rem}
-  input{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;background:#120d06;color:var(--ink);font-size:1rem}
-  .btn{margin-top:14px;width:100%;padding:12px;border:0;border-radius:10px;background:var(--acc);color:#1a1205;font-weight:700;font-size:1rem;cursor:pointer}
-  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);font-weight:400}
-  .status{margin:10px 0;padding:10px 12px;border-radius:10px;background:var(--panel);border:1px solid var(--line);font-size:.9rem}
-  .muted{color:var(--mute)}.ok{color:var(--ok)}.bad{color:var(--bad)}
-  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--mute);border-top-color:var(--acc);border-radius:50%;animation:s .7s linear infinite;vertical-align:middle;margin-right:6px}
-  @keyframes s{to{transform:rotate(360deg)}}
-  .hint{color:var(--mute);font-size:.8rem;margin-top:8px}
-  #addBox{display:none;margin-top:10px}
+:root{
+  --bg:#07070b;--panel:#0f0d13;--panel2:#15121a;--ink:#f3e7e7;--mute:#b08a8f;--dim:#6b5b60;
+  --red:#ff2a2a;--red2:#ff5c5c;--deep:#7a0b12;--cyan:#2de2e6;--line:#3a1218;--glow:0 0 8px rgba(255,42,42,.55);}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  background-image:radial-gradient(circle at 50% -8%,rgba(255,42,42,.10),transparent 55%);}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 3px);opacity:.5}
+header{display:flex;align-items:center;gap:14px;padding:16px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(255,42,42,.09),transparent)}
+header img{height:54px;image-rendering:pixelated;filter:drop-shadow(var(--glow))}
+h1{margin:0;font-size:1.2rem;letter-spacing:.3em;color:var(--red);text-shadow:var(--glow);text-transform:uppercase}
+.sub{color:var(--mute);font-size:.68rem;letter-spacing:.18em;margin-top:3px;text-transform:uppercase}
+main{max-width:660px;margin:0 auto;padding:16px}
+h3{font-size:.78rem;letter-spacing:.22em;text-transform:uppercase;color:var(--red2);margin:20px 0 8px;
+  border-left:3px solid var(--red);padding-left:9px;text-shadow:0 0 6px rgba(255,92,92,.4)}
+.tabs{display:flex;gap:6px;margin-bottom:16px}
+.tabs button{flex:1;padding:11px 6px;border:1px solid var(--line);background:var(--panel);color:var(--mute);
+  font:inherit;text-transform:uppercase;letter-spacing:.1em;font-size:.72rem;cursor:pointer;
+  clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+.tabs button.active{background:var(--red);border-color:var(--red);color:#1a0406;font-weight:700;box-shadow:var(--glow)}
+.view{display:none}.view.active{display:block}
+.btn{margin-top:14px;width:100%;padding:12px;border:1px solid var(--red);
+  background:linear-gradient(180deg,var(--red),var(--deep));color:#1a0406;font:inherit;font-weight:700;
+  letter-spacing:.12em;text-transform:uppercase;cursor:pointer;box-shadow:var(--glow);
+  clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)}
+.btn:hover{filter:brightness(1.15)}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);box-shadow:none;font-weight:400}
+.btn.ghost:hover{border-color:var(--red);color:var(--red2)}
+.btn.danger{background:transparent;border:1px solid var(--deep);color:var(--red2);box-shadow:none}
+.btn.danger:hover{background:#1a0406}
+input{width:100%;padding:11px;border:1px solid var(--line);background:#0a0810;color:var(--ink);font:inherit}
+input:focus{outline:none;border-color:var(--red);box-shadow:var(--glow)}
+label{display:block;margin:14px 0 4px;color:var(--mute);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase}
+.net,.srow,.hostrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;
+  background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--red);margin:7px 0}
+.hostrow{align-items:flex-start}
+.net .nm,.srow .nm2,.hostrow .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.net .meta,.srow .sub2,.hostrow .meta{color:var(--mute);font-size:.7rem}
+.net .meta,.srow .sub2{white-space:nowrap}
+.pick{cursor:pointer}.pick:hover{border-left-color:var(--cyan);background:var(--panel2)}
+.lock{color:var(--deep);margin-left:6px}
+.bars{color:var(--red2)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:middle;box-shadow:0 0 6px currentColor}
+.srow{touch-action:none}.srow.drag{opacity:.6;border-left-color:var(--cyan)}
+.srow .handle{cursor:grab;color:var(--red);font-size:1.1rem;padding:0 4px;user-select:none}
+.srow .info{flex:1;min-width:0}.srow .ctl{display:flex;gap:4px}
+.srow .ctl button,.hostdel{min-width:30px;height:30px;border:1px solid var(--line);background:#0a0810;color:var(--ink);cursor:pointer;font:inherit}
+.srow .ctl .rm,.hostdel{color:var(--red2);border-color:var(--deep)}
+.status{margin:10px 0;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--red);font-size:.8rem}
+.muted{color:var(--mute)}.ok{color:#48e06a}.bad{color:var(--red2)}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--red);border-radius:50%;animation:s .7s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes s{to{transform:rotate(360deg)}}
+.hint{color:var(--mute);font-size:.72rem;margin-top:8px}
+.port{display:inline-block;background:#1a0406;border:1px solid var(--deep);color:var(--red2);padding:1px 6px;margin:3px 3px 0 0;font-size:.7rem}
+.noports{color:var(--dim);font-size:.72rem}
+#addBox{display:none;margin-top:10px}
 </style></head>
 <body>
-<header><h1>SIGNAL SNIFFER</h1><div class="sub">T-Dongle-S3 &middot; AP: BL00DH0UND</div></header>
+<header>
+  <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAJIAAACYCAYAAAAP4LDoAAAC00lEQVR42u3dgZHDIAxEUeXm2kn/haSgXAUeGx8YCd4vwLE9m0WLAEcAQBZeqzzI9/3+pnihn89rRyH9+C+BkEBIICSAkLBZasuSwqQ8jgRCAiGBkABCwt6pbZd0tnqa40ggJBASCAkgJKyS2rKntKtp6ennyJ7iOBK68OsVmEfiSCAkEBIwL7W1ppyjGiH7/rVez9l63dk1FUeC1BYJVy30cqpqqyI4EggJhASprVaP7W6a6X2/o1Oo1AapbYde1yqrFTgSFNsgJGBuahudQu5ev1ct0fv3R/XmOBKktkqpprVXNjvNnd3X3efhSDC0gZAAM9stqexqrTR7Zvrofp+u4TgSOJKVmWokKLYBQkIk67WNHqtn9dquXr81ba3SU+NIICQQEggJICSsmtp6rQuqtg9s9ky09UgIvTZE1VNTOBI4UsUu+irfouVI4EhPpJNZaWlWD5IjgSOFE/h9CZMjgZBASNi0Rtpt7M9SE80+PaX1fjgSpLbwxUs1EjjS0qe4ruZA1iPB0AZCAggJhITVd5E8NTPae8+99MWREOaRotpMdC+nVCMBlRzpbH/V02uuq+0CuXraLkfCGo5UvRY4u/+7/+TRZxBk3Tnb+rscCYY2EBKktthqRaQ9/hwJHCnSzxfN+pLkqF7lf5+DI4EjOQVFjQRCAggJaqRcae9ovilbb86+NhjaQEiAGikG9Nau1kLZVzByJHAkKS/KfO3prHfoxDYY2kBIUCNJcd4CR8KujjTaAVp3+D59xsCs87R9QRKGNhASQEggJESxMySrzJ+0po2q80LVVhFwJBASCAmEBBASqp/8nz3NZFmpWPXMSY4EQgIhIaxHgpWaHAmbOVKvntrV6zi9liOBkEBIgNS2z1eNOBLWcqTsp2jM6sFVcRJnSMLQBkICpDa1CkcCR+Ik4EggJBASCAkgJMzb14awioAjgZBASCAkgJAAAIj4A/8fbu9CEN2jAAAAAElFTkSuQmCC" alt="bloodhound">
+  <div><h1>SIGNAL SNIFFER</h1><div class="sub">T-Dongle-S3 &middot; AP: BL00DH0UND</div></div>
+</header>
 <main>
   <div class="status" id="status"><span class="muted">Loading status...</span></div>
   <div class="tabs">
@@ -60,14 +82,13 @@ const char INDEX_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 
   <section id="scan" class="view active">
     <button class="btn" onclick="doScan()">Scan now</button>
-    <div id="scanList"><p class="hint">Tap "Scan now" to list every nearby network. The LED turns blue and results also show on the dongle screen.</p></div>
+    <div id="scanList"><p class="hint">Tap "Scan now" to list every nearby network. The LED turns blue and results also show on the device screen.</p></div>
   </section>
 
   <section id="settings" class="view">
     <h3>Saved networks &mdash; priority order</h3>
-    <p class="hint">The dongle joins the highest one that's in range. Drag the <b>&#9776;</b> handle or use the arrows to reorder. Green dot = in range now.</p>
+    <p class="hint">The dongle joins the highest one in range. Drag the handle or use arrows to reorder. Green dot = in range now.</p>
     <div id="savedList"><p class="hint">Loading...</p></div>
-
     <button class="btn ghost" id="addBtn" onclick="toggleAdd()">+ Add a new network</button>
     <div id="addBox">
       <button class="btn ghost" onclick="loadFull()">Show nearby networks</button>
@@ -82,97 +103,83 @@ const char INDEX_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   </section>
 
   <section id="network" class="view">
-    <h3>Host discovery (ARP sweep)</h3>
-    <p class="hint">Sweeps the /24 of the network the dongle is joined to and lists live hosts. For networks you're authorized to assess. LED turns purple while scanning.</p>
+    <h3>Host discovery &mdash; ARP sweep</h3>
+    <p class="hint">Sweeps the /24 of the joined network for live hosts. Authorized networks only. The bloodhound fills red while it runs.</p>
     <button class="btn" onclick="arpSweep()">ARP sweep</button>
     <div id="hostList"></div>
     <h3>Port scan</h3>
-    <p class="hint">Checks a short list of common TCP ports on one host.</p>
     <label for="pip">Target IP</label>
-    <input id="pip" placeholder="tap a host above, or type an IP">
+    <input id="pip" placeholder="tap a host, or type an IP">
     <button class="btn" onclick="portScan()">Scan ports</button>
     <div id="portResult" class="hint"></div>
-    <h3>Saved inventory (on SD)</h3>
-    <p class="hint">Every discovered host, grouped by the network it was found on and sorted by IP, with any ports found. Saved to the card.</p>
-    <button class="btn ghost" onclick="loadInventory()">View saved hosts</button>
+    <h3>Saved inventory (SD)</h3>
+    <p class="hint">Every discovered host, grouped by network, sorted by IP, with any open ports. Stored on the card.</p>
+    <button class="btn ghost" onclick="loadInventory()">Refresh inventory</button>
+    <button class="btn danger" onclick="clearHosts()">Delete all saved hosts</button>
     <div id="inv"></div>
   </section>
 </main>
 <script>
 function esc(s){return (s||'').replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function q(s){return (s||'').replace(/\\/g,'').replace(/'/g,"\\'");}
 function bars(r){var n=r>-60?4:r>-70?3:r>-80?2:1;var f='';for(var i=0;i<4;i++)f+=i<n?'|':'.';return f;}
-function show(v){
-  var map={scan:'tScan',settings:'tSet',network:'tNet'};
-  for(var id in map){
-    document.getElementById(id).classList.toggle('active',id==v);
-    document.getElementById(map[id]).classList.toggle('active',id==v);
-  }
-  if(v=='settings') loadSaved();
-}
+function show(v){var m={scan:'tScan',settings:'tSet',network:'tNet'};
+  for(var id in m){document.getElementById(id).classList.toggle('active',id==v);
+    document.getElementById(m[id]).classList.toggle('active',id==v);}
+  if(v=='settings')loadSaved(); if(v=='network')loadInventory();}
 function refreshStatus(){
   fetch('/status').then(r=>r.json()).then(d=>{
     var ok=d.connected;
     document.getElementById('status').innerHTML=
-      '<span class="dot" style="background:'+(ok?'var(--ok)':'var(--mute)')+'"></span>'+
-      (ok? 'Online via <b>'+esc(d.ssid)+'</b> &middot; '+d.ip : 'Access point only')+
-      '<br><span class="muted">AP: '+esc(d.ap)+' &middot; 192.168.4.1 &middot; '+d.clients+' client(s) &middot; store: '+d.storage+'</span>';
+      '<span class="dot" style="color:'+(ok?'#48e06a':'var(--mute)')+'"></span>'+
+      (ok?'ONLINE // <b>'+esc(d.ssid)+'</b> // '+d.ip:'AP ONLY')+
+      '<br><span class="muted">AP '+esc(d.ap)+' // 192.168.4.1 // '+d.clients+' client(s) // store:'+d.storage+'</span>';
   }).catch(()=>{});
 }
-/* ---- Scanner tab (full list, blue LED, screen) ---- */
 function doScan(){
   var el=document.getElementById('scanList');
   el.innerHTML='<p><span class="spin"></span>Scanning... LED is blue</p>';
   fetch('/scan').then(r=>r.json()).then(list=>{
     if(!list.length){el.innerHTML='<p class="hint">No networks found.</p>';return;}
     el.innerHTML=list.map(n=>'<div class="net"><div><div class="nm">'+esc(n.ssid||'(hidden)')+
-      '</div><div class="meta">ch '+n.ch+' &middot; '+n.enc+'</div></div>'+
+      '</div><div class="meta">ch '+n.ch+' // '+n.enc+'</div></div>'+
       '<div class="meta"><span class="bars">'+bars(n.rssi)+'</span> '+n.rssi+' dBm</div></div>').join('');
   }).catch(()=>{el.innerHTML='<p class="bad">Scan failed.</p>';});
 }
-/* ---- Settings: saved list w/ availability + reorder ---- */
 function loadSaved(){
   var el=document.getElementById('savedList');
   el.innerHTML='<p><span class="spin"></span>Checking saved networks...</p>';
   fetch('/saved').then(r=>r.json()).then(d=>{
     var nets=d.nets||[];
     if(!nets.length){el.innerHTML='<p class="hint">No saved networks yet. Add one below.</p>';return;}
-    el.innerHTML=nets.map((n,i)=>rowHTML(n,i)).join('');
-    wireDrag();
+    el.innerHTML=nets.map((n,i)=>rowHTML(n,i)).join(''); wireDrag();
   }).catch(()=>{el.innerHTML='<p class="bad">Could not load saved list.</p>';});
 }
 function rowHTML(n,i){
-  var dotCol=n.available?'var(--ok)':'var(--mute)';
-  var avail=n.available?('in range &middot; '+n.rssi+' dBm'):'not in range';
+  var col=n.available?'#48e06a':'var(--mute)';
+  var avail=n.available?('in range // '+n.rssi+' dBm'):'not in range';
   return '<div class="srow" data-idx="'+i+'">'+
-    '<span class="handle" aria-label="drag">&#9776;</span>'+
-    '<span class="dot" style="background:'+dotCol+'"></span>'+
+    '<span class="handle">&#9776;</span>'+
+    '<span class="dot" style="color:'+col+'"></span>'+
     '<div class="info"><div class="nm2">'+esc(n.ssid)+'</div><div class="sub2">'+avail+'</div></div>'+
-    '<div class="ctl">'+
-      '<button onclick="move(this,-1)" aria-label="up">&#9650;</button>'+
-      '<button onclick="move(this,1)" aria-label="down">&#9660;</button>'+
-      '<button class="rm" onclick="forget(\''+esc(n.ssid).replace(/'/g,"\\'")+'\')" aria-label="remove">&times;</button>'+
-    '</div></div>';
+    '<div class="ctl"><button onclick="move(this,-1)">&#9650;</button>'+
+    '<button onclick="move(this,1)">&#9660;</button>'+
+    '<button class="rm" onclick="forget(\''+q(n.ssid)+'\')">&times;</button></div></div>';
 }
 function commitOrder(){
   var ids=[...document.querySelectorAll('#savedList .srow')].map(r=>r.getAttribute('data-idx'));
-  fetch('/reorder',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'order='+ids.join(',')}).then(()=>loadSaved());
+  fetch('/reorder',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'order='+ids.join(',')}).then(()=>loadSaved());
 }
 function move(btn,dir){
-  var row=btn.closest('.srow'), list=document.getElementById('savedList');
-  if(dir<0 && row.previousElementSibling) list.insertBefore(row,row.previousElementSibling);
-  if(dir>0 && row.nextElementSibling) list.insertBefore(row.nextElementSibling,row);
+  var row=btn.closest('.srow'),list=document.getElementById('savedList');
+  if(dir<0&&row.previousElementSibling)list.insertBefore(row,row.previousElementSibling);
+  if(dir>0&&row.nextElementSibling)list.insertBefore(row.nextElementSibling,row);
   commitOrder();
 }
-/* pointer-based drag reorder (works on touch + mouse) */
 var dragRow=null;
 function wireDrag(){
   document.querySelectorAll('#savedList .handle').forEach(h=>{
-    h.addEventListener('pointerdown',e=>{
-      e.preventDefault();
-      dragRow=h.closest('.srow'); dragRow.classList.add('drag');
-      h.setPointerCapture(e.pointerId);
-    });
+    h.addEventListener('pointerdown',e=>{e.preventDefault();dragRow=h.closest('.srow');dragRow.classList.add('drag');h.setPointerCapture(e.pointerId);});
   });
   document.addEventListener('pointermove',onDragMove);
   document.addEventListener('pointerup',onDragUp);
@@ -182,76 +189,57 @@ function onDragMove(e){
   var list=document.getElementById('savedList');
   var rows=[...list.querySelectorAll('.srow')].filter(r=>r!==dragRow);
   var after=null;
-  for(var r of rows){
-    var box=r.getBoundingClientRect();
-    if(e.clientY < box.top+box.height/2){ after=r; break; }
-  }
-  if(after) list.insertBefore(dragRow,after); else list.appendChild(dragRow);
+  for(var r of rows){var b=r.getBoundingClientRect();if(e.clientY<b.top+b.height/2){after=r;break;}}
+  if(after)list.insertBefore(dragRow,after);else list.appendChild(dragRow);
 }
-function onDragUp(){
-  if(!dragRow)return;
-  dragRow.classList.remove('drag'); dragRow=null;
-  commitOrder();
-}
-/* ---- add a new network ---- */
-function toggleAdd(){
-  var b=document.getElementById('addBox');
-  b.style.display = b.style.display=='block' ? 'none' : 'block';
-}
+function onDragUp(){if(!dragRow)return;dragRow.classList.remove('drag');dragRow=null;commitOrder();}
+function toggleAdd(){var b=document.getElementById('addBox');b.style.display=b.style.display=='block'?'none':'block';}
 function loadFull(){
   var el=document.getElementById('fullList');
   el.innerHTML='<p><span class="spin"></span>Scanning... LED is blue</p>';
   fetch('/scan').then(r=>r.json()).then(list=>{
     if(!list.length){el.innerHTML='<p class="hint">No networks found.</p>';return;}
-    el.innerHTML=list.map(n=>'<div class="net pick" onclick="pick(\''+esc(n.ssid).replace(/'/g,"\\'")+'\')">'+
-      '<div class="nm">'+esc(n.ssid||'(hidden)')+(n.enc!='open'?'<span class="lock">lock</span>':'')+'</div>'+
+    el.innerHTML=list.map(n=>'<div class="net pick" onclick="pick(\''+q(n.ssid)+'\')"><div class="nm">'+
+      esc(n.ssid||'(hidden)')+(n.enc!='open'?'<span class="lock">#</span>':'')+'</div>'+
       '<div class="meta"><span class="bars">'+bars(n.rssi)+'</span> '+n.rssi+'</div></div>').join('');
   }).catch(()=>{el.innerHTML='<p class="bad">Scan failed.</p>';});
 }
 function pick(s){document.getElementById('ssid').value=s;document.getElementById('pass').focus();}
 function connect(){
-  var ssid=document.getElementById('ssid').value.trim();
-  var pass=document.getElementById('pass').value;
-  var m=document.getElementById('setMsg');
+  var ssid=document.getElementById('ssid').value.trim(),pass=document.getElementById('pass').value,m=document.getElementById('setMsg');
   if(!ssid){m.innerHTML='<span class="bad">Enter a network name.</span>';return;}
   m.innerHTML='<span class="spin"></span>Connecting to '+esc(ssid)+'...';
-  fetch('/connect',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(pass)})
+  fetch('/connect',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(pass)})
     .then(r=>r.json()).then(d=>{
-      if(d.connected){m.innerHTML='<span class="ok">Connected! IP '+d.ip+' (saved)</span>';
-        document.getElementById('pass').value='';loadSaved();}
-      else{m.innerHTML='<span class="bad">Could not connect. Check the password.</span>';}
+      if(d.connected){m.innerHTML='<span class="ok">Connected // IP '+d.ip+' // saved</span>';document.getElementById('pass').value='';loadSaved();}
+      else m.innerHTML='<span class="bad">Could not connect. Check the password.</span>';
       refreshStatus();
     }).catch(()=>{m.innerHTML='<span class="bad">Request failed.</span>';});
 }
 function forget(ssid){
-  fetch('/forget',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:'ssid='+encodeURIComponent(ssid)}).then(()=>{loadSaved();refreshStatus();});
+  fetch('/forget',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'ssid='+encodeURIComponent(ssid)}).then(()=>{loadSaved();refreshStatus();});
 }
-/* ---- Network tab: ARP sweep + port scan ---- */
 function arpSweep(){
   var el=document.getElementById('hostList');
-  el.innerHTML='<p><span class="spin"></span>Sweeping subnet... LED is purple</p>';
+  el.innerHTML='<p><span class="spin"></span>Sweeping subnet... bloodhound filling</p>';
   fetch('/arp').then(r=>r.json()).then(d=>{
     if(d.error){el.innerHTML='<p class="bad">'+esc(d.error)+'</p>';return;}
-    var hosts=d.hosts||[];
-    if(!hosts.length){el.innerHTML='<p class="hint">No hosts answered. On some networks clients ignore ARP from unknown hosts.</p>';return;}
-    el.innerHTML='<p class="hint">'+hosts.length+' host(s) on '+esc(d.net||d.self)+' ('+esc(d.self)+'). Tap one to port-scan it. Saved to SD.</p>'+
-      hosts.map(h=>'<div class="net pick" onclick="pip(\''+h.ip+'\')"><div class="nm">'+h.ip+
-      '</div><div class="meta">'+h.mac+'</div></div>').join('');
+    var h=d.hosts||[];
+    if(!h.length){el.innerHTML='<p class="hint">No hosts answered. Some devices ignore ARP from unknown hosts.</p>';loadInventory();return;}
+    el.innerHTML='<p class="hint">'+h.length+' host(s) on '+esc(d.net||d.self)+' ('+esc(d.self)+'). Tap one to port-scan. Saved to SD.</p>'+
+      h.map(x=>'<div class="net pick" onclick="pip(\''+x.ip+'\')"><div class="nm">'+x.ip+'</div><div class="meta">'+x.mac+'</div></div>').join('');
     loadInventory();
   }).catch(()=>{el.innerHTML='<p class="bad">Sweep failed.</p>';});
 }
 function pip(ip){document.getElementById('pip').value=ip;}
 function portScan(){
-  var ip=document.getElementById('pip').value.trim();
-  var el=document.getElementById('portResult');
+  var ip=document.getElementById('pip').value.trim(),el=document.getElementById('portResult');
   if(!ip){el.innerHTML='<span class="bad">Enter an IP.</span>';return;}
   el.innerHTML='<span class="spin"></span>Scanning '+esc(ip)+'...';
   fetch('/portscan?ip='+encodeURIComponent(ip)).then(r=>r.json()).then(d=>{
     if(d.error){el.innerHTML='<span class="bad">'+esc(d.error)+'</span>';return;}
-    if(!d.open.length){el.innerHTML='<span class="muted">No common ports open on '+esc(ip)+'.</span>';return;}
-    el.innerHTML='<b>'+esc(ip)+'</b> open: '+d.open.join(', ');
+    if(!d.open.length){el.innerHTML='<span class="muted">No common ports open on '+esc(ip)+'.</span>';}
+    else el.innerHTML='<b>'+esc(ip)+'</b> open: '+d.open.map(p=>'<span class="port">'+p+'</span>').join('');
     loadInventory();
   }).catch(()=>{el.innerHTML='<span class="bad">Scan failed.</span>';});
 }
@@ -260,16 +248,24 @@ function loadInventory(){
   el.innerHTML='<p><span class="spin"></span>Reading inventory...</p>';
   fetch('/hosts').then(r=>r.json()).then(list=>{
     if(!list.length){el.innerHTML='<p class="hint">No hosts saved yet. Run an ARP sweep.</p>';return;}
-    var html='', curNet=null;
+    var html='',cur=null;
     list.forEach(function(h){
-      if(h.net!==curNet){ curNet=h.net; html+='<h3>'+esc(curNet||'(unknown)')+'</h3>'; }
-      var ports=h.ports? esc(h.ports).replace(/ /g,', ') : '<span class="muted">not scanned</span>';
-      html+='<div class="net"><div style="min-width:0"><div class="nm">'+h.ip+
-        '</div><div class="meta">'+esc(h.mac||'--')+' &middot; seen +'+h.seen+'s</div></div>'+
-        '<div class="meta">ports: '+ports+'</div></div>';
+      if(h.net!==cur){cur=h.net;html+='<h3>'+esc(cur||'(unknown)')+'</h3>';}
+      var ports=h.ports?h.ports.split(' ').map(p=>'<span class="port">'+esc(p)+'</span>').join(''):'<span class="noports">not scanned</span>';
+      html+='<div class="hostrow"><div style="min-width:0"><div class="nm">'+h.ip+
+        '</div><div class="meta">'+esc(h.mac||'--')+' // seen +'+h.seen+'s</div>'+
+        '<div style="margin-top:4px">'+ports+'</div></div>'+
+        '<button class="hostdel" onclick="delHost(\''+q(h.net)+'\',\''+h.ip+'\')">&times;</button></div>';
     });
     el.innerHTML=html;
   }).catch(()=>{el.innerHTML='<p class="bad">Could not read inventory.</p>';});
+}
+function delHost(net,ip){
+  fetch('/delhost',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'net='+encodeURIComponent(net)+'&ip='+encodeURIComponent(ip)}).then(()=>loadInventory());
+}
+function clearHosts(){
+  if(!confirm('Delete ALL saved hosts from the SD card?'))return;
+  fetch('/clearhosts',{method:'POST'}).then(()=>loadInventory());
 }
 refreshStatus();setInterval(refreshStatus,4000);
 </script>

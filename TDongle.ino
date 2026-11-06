@@ -653,6 +653,25 @@ void handleHosts(){
   j+="]";
   server.send(200,"application/json",j);
 }
+void removeHostRec(int idx){
+  if(idx<0||idx>=hostCount) return;
+  for(int i=idx;i<hostCount-1;i++) hosts[i]=hosts[i+1];
+  hostCount--;
+}
+// Delete one saved host (by network + ip) from the inventory and the card.
+void handleDelHost(){
+  String net=server.arg("net"), ip=server.arg("ip");
+  int i=findHost(net,ip);
+  if(i>=0){ removeHostRec(i); saveHosts(); }
+  server.send(200,"application/json","{\"ok\":true}");
+}
+// Wipe the whole inventory from the card.
+void handleClearHosts(){
+  hostCount=0;
+  if(usingSD) SD_MMC.remove(HOSTS_PATH);
+  else { prefs.begin("hosts",false); prefs.clear(); prefs.end(); }
+  server.send(200,"application/json","{\"ok\":true}");
+}
 
 // Auto-join best saved network that's currently in range (priority order).
 void autoJoinBest(){
@@ -717,6 +736,8 @@ void setup(){
   server.on("/arp",handleArp);
   server.on("/portscan",handlePortscan);
   server.on("/hosts",handleHosts);
+  server.on("/delhost",HTTP_POST,handleDelHost);
+  server.on("/clearhosts",HTTP_POST,handleClearHosts);
   server.on("/status",handleStatus);
   server.onNotFound(handleRoot);
   server.begin();
