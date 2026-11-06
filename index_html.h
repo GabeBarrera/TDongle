@@ -92,6 +92,10 @@ const char INDEX_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
     <input id="pip" placeholder="tap a host above, or type an IP">
     <button class="btn" onclick="portScan()">Scan ports</button>
     <div id="portResult" class="hint"></div>
+    <h3>Saved inventory (on SD)</h3>
+    <p class="hint">Every discovered host, grouped by the network it was found on and sorted by IP, with any ports found. Saved to the card.</p>
+    <button class="btn ghost" onclick="loadInventory()">View saved hosts</button>
+    <div id="inv"></div>
   </section>
 </main>
 <script>
@@ -232,9 +236,10 @@ function arpSweep(){
     if(d.error){el.innerHTML='<p class="bad">'+esc(d.error)+'</p>';return;}
     var hosts=d.hosts||[];
     if(!hosts.length){el.innerHTML='<p class="hint">No hosts answered. On some networks clients ignore ARP from unknown hosts.</p>';return;}
-    el.innerHTML='<p class="hint">'+hosts.length+' host(s) on '+esc(d.self)+'\'s subnet. Tap one to port-scan it.</p>'+
+    el.innerHTML='<p class="hint">'+hosts.length+' host(s) on '+esc(d.net||d.self)+' ('+esc(d.self)+'). Tap one to port-scan it. Saved to SD.</p>'+
       hosts.map(h=>'<div class="net pick" onclick="pip(\''+h.ip+'\')"><div class="nm">'+h.ip+
       '</div><div class="meta">'+h.mac+'</div></div>').join('');
+    loadInventory();
   }).catch(()=>{el.innerHTML='<p class="bad">Sweep failed.</p>';});
 }
 function pip(ip){document.getElementById('pip').value=ip;}
@@ -247,7 +252,24 @@ function portScan(){
     if(d.error){el.innerHTML='<span class="bad">'+esc(d.error)+'</span>';return;}
     if(!d.open.length){el.innerHTML='<span class="muted">No common ports open on '+esc(ip)+'.</span>';return;}
     el.innerHTML='<b>'+esc(ip)+'</b> open: '+d.open.join(', ');
+    loadInventory();
   }).catch(()=>{el.innerHTML='<span class="bad">Scan failed.</span>';});
+}
+function loadInventory(){
+  var el=document.getElementById('inv');
+  el.innerHTML='<p><span class="spin"></span>Reading inventory...</p>';
+  fetch('/hosts').then(r=>r.json()).then(list=>{
+    if(!list.length){el.innerHTML='<p class="hint">No hosts saved yet. Run an ARP sweep.</p>';return;}
+    var html='', curNet=null;
+    list.forEach(function(h){
+      if(h.net!==curNet){ curNet=h.net; html+='<h3>'+esc(curNet||'(unknown)')+'</h3>'; }
+      var ports=h.ports? esc(h.ports).replace(/ /g,', ') : '<span class="muted">not scanned</span>';
+      html+='<div class="net"><div style="min-width:0"><div class="nm">'+h.ip+
+        '</div><div class="meta">'+esc(h.mac||'--')+' &middot; seen +'+h.seen+'s</div></div>'+
+        '<div class="meta">ports: '+ports+'</div></div>';
+    });
+    el.innerHTML=html;
+  }).catch(()=>{el.innerHTML='<p class="bad">Could not read inventory.</p>';});
 }
 refreshStatus();setInterval(refreshStatus,4000);
 </script>

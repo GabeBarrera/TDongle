@@ -33,6 +33,7 @@
 #include <WiFiClient.h>
 #include "lwip/etharp.h"     // ARP table access (already linked by Wi-Fi)
 #include "lwip/netif.h"
+#include "lwip/tcpip.h"      // LOCK_TCPIP_CORE() — lwIP must be touched with the core lock held
 #include "index_html.h"      // web page (PROGMEM raw string)
 #include "bh_image.h"        // bloodhound boot-splash bitmap
 
@@ -193,6 +194,8 @@ void bhFillTo(int pct){          // animate red waterline up to pct
     delay(10);
   }
 }
+// Reset + draw the dog fresh, for reuse as a "busy/loading" splash.
+void bhBegin(){ bhCur=0; bhWaterTop=BH_Y+BH_H; bhDrawBase(); }
 
 // ================= Saved-network store =================
 #define MAX_SAVED 12
@@ -285,7 +288,7 @@ void drawHomeStatic(){
   drawText(4,2,DEV_NAME,C_ORANGE,C_BLACK,1);
   fillRect(4,12,152,1,C_GREY);
   drawText(4,18,"AP:",C_GREY,C_BLACK,1);
-  drawText(28,18,AP_SSID,C_CYAN,C_BLACK,1);
+  drawText(28,18,AP_SSID,C_RED,C_BLACK,1);   // AP name in red
   drawText(4,30,"IP:",C_GREY,C_BLACK,1);
   drawText(28,30,"192.168.4.1",C_WHITE,C_BLACK,1);
   drawText(4,46,"WIFI:",C_GREY,C_BLACK,1);
@@ -467,55 +470,134 @@ void discAdd(const String &ip, const String &mac){
   if(discCount>=DISC_MAX) return;
   discIp[discCount]=ip; discMac[discCount]=mac; discCount++;
 }
-// Pull current stable entries out of the lwIP ARP cache into our list.
+
+// ---- Persistent host inventory (saved to SD, grouped by network) ----
+#define HOST_MAX 128
+struct HostRec { String net; String ip; String mac; String ports; uint32_t seen; };
+HostRec hosts[HOST_MAX];
+int hostCount = 0;
+const char *HOSTS_PATH = "/hosts.csv";
+
+uint32_t ipKey(const String &ip){
+  IPAddress a; a.fromString(ip);
+  return ((uint32_t)a[0]<<24)|((uint32_t)a[1]<<16)|((uint32_t)a[2]<<8)|a[3];
+}
+int findHost(const String &net, const String &ip){
+  for(int i=0;i<hostCount;i++) if(hosts[i].net==net && hosts[i].ip==ip) return i;
+  return -1;
+}
+void upsertHost(const String &net, const String &ip, const String &mac){
+  int i=findHost(net,ip);
+  if(i<0){ if(hostCount>=HOST_MAX) return; i=hostCount++; hosts[i].net=net; hosts[i].ip=ip; hosts[i].ports=""; }
+  if(mac.length()) hosts[i].mac=mac;
+  hosts[i].seen=millis()/1000;
+}
+void setHostPorts(const String &net, const String &ip, const String &ports){
+  int i=findHost(net,ip);
+  if(i<0){ if(hostCount>=HOST_MAX) return; i=hostCount++; hosts[i].net=net; hosts[i].ip=ip; hosts[i].mac=""; }
+  hosts[i].ports=ports; hosts[i].seen=millis()/1000;
+}
+void sortHosts(){                 // by network name, then IP numeric
+  for(int i=1;i<hostCount;i++){
+    HostRec k=hosts[i]; int j=i-1;
+    while(j>=0 && (hosts[j].net>k.net || (hosts[j].net==k.net && ipKey(hosts[j].ip)>ipKey(k.ip)))){
+      hosts[j+1]=hosts[j]; j--;
+    }
+    hosts[j+1]=k;
+  }
+}
+void saveHosts(){
+  sortHosts();
+  String blob="network,ip,mac,ports,last_seen_s\n";
+  for(int i=0;i<hostCount;i++){
+    String p=hosts[i].ports; p.replace(" ","|"); if(p.length()==0) p="-";
+    blob+=hosts[i].net+","+hosts[i].ip+","+(hosts[i].mac.length()?hosts[i].mac:String("-"))+
+          ","+p+","+String(hosts[i].seen)+"\n";
+  }
+  if(usingSD){ File f=SD_MMC.open(HOSTS_PATH,FILE_WRITE); if(f){ f.print(blob); f.close(); return; } }
+  prefs.begin("hosts",false); prefs.putString("csv", blob.substring(0, 3000)); prefs.end();
+}
+void loadHosts(){
+  String blob;
+  if(usingSD && SD_MMC.exists(HOSTS_PATH)){ File f=SD_MMC.open(HOSTS_PATH,FILE_READ); if(f){ blob=f.readString(); f.close(); } }
+  else { prefs.begin("hosts",true); blob=prefs.getString("csv",""); prefs.end(); }
+  hostCount=0; int start=0; bool firstLine=true;
+  while(start<blob.length() && hostCount<HOST_MAX){
+    int nl=blob.indexOf('\n',start); if(nl<0) nl=blob.length();
+    String line=blob.substring(start,nl); start=nl+1;
+    if(firstLine){ firstLine=false; if(line.startsWith("network,")) continue; }
+    int c1=line.indexOf(','), c2=line.indexOf(',',c1+1),
+        c3=line.indexOf(',',c2+1), c4=line.indexOf(',',c3+1);
+    if(c1<0||c2<0||c3<0||c4<0) continue;
+    HostRec r; r.net=line.substring(0,c1); r.ip=line.substring(c1+1,c2); r.mac=line.substring(c2+1,c3);
+    String p=line.substring(c3+1,c4); p.replace("|"," "); if(p=="-") p=""; r.ports=p;
+    r.seen=(uint32_t)line.substring(c4+1).toInt();
+    if(r.mac=="-") r.mac="";
+    hosts[hostCount++]=r;
+  }
+}
+
+// Find the station netif (the one holding our STA IP), not the AP netif.
+struct netif* staNetif(){
+  IPAddress self=WiFi.localIP();
+  for(struct netif *n=netif_list; n; n=n->next){
+    const ip4_addr_t *a=netif_ip4_addr(n);
+    if(a && !ip4_addr_isany(a) && IPAddress(ip4_addr_get_u32(a))==self) return n;
+  }
+  return netif_default;
+}
+
+// Pull stable ARP-cache entries into our list. lwIP read is done under the core lock.
 void drainArpTable(){
   for(size_t i=0;i<10;i++){   // default ARP_TABLE_SIZE
     ip4_addr_t *ipaddr=nullptr; struct netif *nif=nullptr; struct eth_addr *eth=nullptr;
+    bool ok=false; uint32_t ipu=0; uint8_t mac[6]={0};
+    LOCK_TCPIP_CORE();
     if(etharp_get_entry(i,&ipaddr,&nif,&eth)==1 && ipaddr && eth){
-      IPAddress ip(ip4_addr_get_u32(ipaddr));
+      ipu=ip4_addr_get_u32(ipaddr);
+      for(int k=0;k<6;k++) mac[k]=eth->addr[k];
+      ok=true;
+    }
+    UNLOCK_TCPIP_CORE();
+    if(ok){
       char m[18];
-      snprintf(m,sizeof(m),"%02x:%02x:%02x:%02x:%02x:%02x",
-               eth->addr[0],eth->addr[1],eth->addr[2],eth->addr[3],eth->addr[4],eth->addr[5]);
-      discAdd(ip.toString(), String(m));
+      snprintf(m,sizeof(m),"%02x:%02x:%02x:%02x:%02x:%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+      discAdd(IPAddress(ipu).toString(), String(m));
     }
   }
 }
-void drawDiscScreen(const char *title, int count){
-  fillScreen(C_BLACK);
-  drawText(4,2,title,C_CYAN,C_BLACK,1);
-  char h[16]; snprintf(h,sizeof(h),"%d up",count);
-  drawText(120,2,h,C_WHITE,C_BLACK,1);
-  fillRect(4,12,152,1,C_GREY);
-  int rows=count<7?count:7;
-  for(int i=0;i<rows;i++) drawText(4,16+i*9,discIp[i].c_str(),C_GREEN,C_BLACK,1);
-}
 
 // ARP-sweep the /24 of the station IP. Needs an active STA connection.
+// Shows the bloodhound loading splash; saves results to the SD inventory.
 void handleArp(){
   if(WiFi.status()!=WL_CONNECTED){
     server.send(200,"application/json","{\"error\":\"join a network first\"}"); return;
   }
-  struct netif *nif=netif_default;
+  struct netif *nif=staNetif();
   if(!nif){ server.send(200,"application/json","{\"error\":\"no netif\"}"); return; }
 
-  setLED(140,0,255,8);                 // purple = discovery
-  screenMode=SCR_SCAN;                 // borrow scan mode so loop won't redraw home
-  discCount=0;
+  String net=WiFi.SSID();
   IPAddress self=WiFi.localIP();
-  drawDiscScreen("ARP SWEEP", 0);
+  setLED(140,0,255,8);                 // purple = discovery
+  screenMode=SCR_SCAN;                 // keep loop from redrawing home
+  bhBegin();                           // bloodhound loading splash
+  discCount=0;
 
   for(int host=1; host<=254; host++){
     if(host==self[3]) continue;
     ip4_addr_t t; IP4_ADDR(&t, self[0],self[1],self[2],host);
-    etharp_request(nif,&t);
+    LOCK_TCPIP_CORE(); etharp_request(nif,&t); UNLOCK_TCPIP_CORE();
     delay(3);
-    if(host%16==0){ drainArpTable(); drawDiscScreen("ARP SWEEP", discCount); }
+    if(host%16==0){ drainArpTable(); bhFillTo(host*100/254); }
   }
   delay(500);
   drainArpTable();
-  drawDiscScreen("ARP SWEEP", discCount);
+  bhFillTo(100);
 
-  String j="{\"self\":\""+self.toString()+"\",\"hosts\":[";
+  for(int i=0;i<discCount;i++) upsertHost(net, discIp[i], discMac[i]);
+  saveHosts();
+
+  String j="{\"self\":\""+self.toString()+"\",\"net\":\""+jsonEsc(net)+"\",\"hosts\":[";
   for(int i=0;i<discCount;i++){ if(i)j+=",";
     j+="{\"ip\":\""+discIp[i]+"\",\"mac\":\""+discMac[i]+"\"}";
   }
@@ -524,7 +606,7 @@ void handleArp(){
   screenMode=SCR_HOME; screenDirty=true;
 }
 
-// TCP connect scan of common ports on one host.
+// TCP connect scan of common ports on one host. Saves open ports to the inventory.
 void handlePortscan(){
   String ipStr=server.arg("ip");
   IPAddress ip;
@@ -534,7 +616,10 @@ void handlePortscan(){
                                  554,587,993,995,1723,3306,3389,5900,8080,8443};
   const int NP=sizeof(PORTS)/sizeof(PORTS[0]);
   setLED(140,0,255,8);
+  screenMode=SCR_SCAN;
+  bhBegin();                           // bloodhound loading splash
 
+  String open="";
   String j="{\"ip\":\""+ipStr+"\",\"open\":[";
   bool first=true;
   for(int i=0;i<NP;i++){
@@ -542,12 +627,31 @@ void handlePortscan(){
     if(c.connect(ip,PORTS[i],250)){
       if(!first)j+=","; first=false;
       j+=String(PORTS[i]);
+      open += (open.length()?" ":"") + String(PORTS[i]);
       c.stop();
     }
+    bhFillTo((i+1)*100/NP);
   }
   j+="]}";
+
+  String net = WiFi.status()==WL_CONNECTED ? WiFi.SSID() : String("(local)");
+  setHostPorts(net, ipStr, open);
+  saveHosts();
+
   server.send(200,"application/json",j);
-  screenDirty=true;
+  screenMode=SCR_HOME; screenDirty=true;
+}
+
+// Return the saved inventory (sorted by network, then IP).
+void handleHosts(){
+  sortHosts();
+  String j="[";
+  for(int i=0;i<hostCount;i++){ if(i)j+=",";
+    j+="{\"net\":\""+jsonEsc(hosts[i].net)+"\",\"ip\":\""+hosts[i].ip+"\",\"mac\":\""+hosts[i].mac+
+       "\",\"ports\":\""+hosts[i].ports+"\",\"seen\":"+String(hosts[i].seen)+"}";
+  }
+  j+="]";
+  server.send(200,"application/json",j);
 }
 
 // Auto-join best saved network that's currently in range (priority order).
@@ -591,7 +695,8 @@ void setup(){
   Serial.printf("Storage: %s\n", usingSD ? "SD card" : "flash (no SD)");
   bhFillTo(30);
   loadSaved();
-  Serial.printf("Loaded %d saved network(s)\n", savedCount);
+  loadHosts();
+  Serial.printf("Loaded %d saved network(s), %d host record(s)\n", savedCount, hostCount);
   bhFillTo(50);
 
   WiFi.mode(WIFI_AP_STA);
@@ -611,6 +716,7 @@ void setup(){
   server.on("/reorder",HTTP_POST,handleReorder);
   server.on("/arp",handleArp);
   server.on("/portscan",handlePortscan);
+  server.on("/hosts",handleHosts);
   server.on("/status",handleStatus);
   server.onNotFound(handleRoot);
   server.begin();
