@@ -372,14 +372,18 @@ int rssiFor(const String &ssid){            // from the most recent scan buffer
 // ================= Route handlers =================
 void handleRoot(){ server.send_P(200,"text/html",INDEX_HTML); }
 
-void handleScan(){                           // full list, blue LED, on screen
+void handleScan(){                           // WAP Sniffer: full list, blue LED, saved to DB
   int n=runScan(true);
   String j="[";
   for(int i=0;i<n;i++){ if(i)j+=",";
-    j+="{\"ssid\":\""+jsonEsc(WiFi.SSID(i))+"\",\"rssi\":"+WiFi.RSSI(i)+
-       ",\"ch\":"+WiFi.channel(i)+",\"enc\":\""+encName(WiFi.encryptionType(i))+"\"}";
+    String ssid=WiFi.SSID(i); String enc=encName(WiFi.encryptionType(i));
+    int ch=WiFi.channel(i), rssi=WiFi.RSSI(i);
+    j+="{\"ssid\":\""+jsonEsc(ssid)+"\",\"rssi\":"+rssi+
+       ",\"ch\":"+ch+",\"enc\":\""+enc+"\"}";
+    if(ssid.length()) upsertWap(ssid, ch, enc, rssi);   // store in the database
   }
   j+="]";
+  saveWaps();
   server.send(200,"application/json",j);
   WiFi.scanDelete();
 }
@@ -471,12 +475,22 @@ void discAdd(const String &ip, const String &mac){
   discIp[discCount]=ip; discMac[discCount]=mac; discCount++;
 }
 
-// ---- Persistent host inventory (saved to SD, grouped by network) ----
+// Strip field separators so values are safe in a tab-delimited file.
+String san(String s){ s.replace("\t"," "); s.replace("\n"," "); s.replace("\r"," "); return s; }
+// split helper: nth tab-delimited field
+String tsvField(const String &line, int n){
+  int start=0;
+  for(int k=0;k<n;k++){ int t=line.indexOf('\t',start); if(t<0) return ""; start=t+1; }
+  int t=line.indexOf('\t',start); if(t<0) t=line.length();
+  return line.substring(start,t);
+}
+
+// ---- Persistent HOST inventory (hosts from ARP/port scans) ----
 #define HOST_MAX 128
-struct HostRec { String net; String ip; String mac; String ports; uint32_t seen; };
+struct HostRec { String net, ip, mac, ports, name, note; uint32_t seen; };
 HostRec hosts[HOST_MAX];
 int hostCount = 0;
-const char *HOSTS_PATH = "/hosts.csv";
+const char *HOSTS_PATH = "/hosts.tsv";
 
 uint32_t ipKey(const String &ip){
   IPAddress a; a.fromString(ip);
@@ -488,14 +502,19 @@ int findHost(const String &net, const String &ip){
 }
 void upsertHost(const String &net, const String &ip, const String &mac){
   int i=findHost(net,ip);
-  if(i<0){ if(hostCount>=HOST_MAX) return; i=hostCount++; hosts[i].net=net; hosts[i].ip=ip; hosts[i].ports=""; }
+  if(i<0){ if(hostCount>=HOST_MAX) return; i=hostCount++; hosts[i].net=net; hosts[i].ip=ip; }
   if(mac.length()) hosts[i].mac=mac;
   hosts[i].seen=millis()/1000;
 }
 void setHostPorts(const String &net, const String &ip, const String &ports){
   int i=findHost(net,ip);
-  if(i<0){ if(hostCount>=HOST_MAX) return; i=hostCount++; hosts[i].net=net; hosts[i].ip=ip; hosts[i].mac=""; }
+  if(i<0){ if(hostCount>=HOST_MAX) return; i=hostCount++; hosts[i].net=net; hosts[i].ip=ip; }
   hosts[i].ports=ports; hosts[i].seen=millis()/1000;
+}
+void setHostMeta(const String &net, const String &ip, const String &name, const String &note){
+  int i=findHost(net,ip);
+  if(i<0){ if(hostCount>=HOST_MAX) return; i=hostCount++; hosts[i].net=net; hosts[i].ip=ip; }
+  hosts[i].name=san(name); hosts[i].note=san(note);
 }
 void sortHosts(){                 // by network name, then IP numeric
   for(int i=1;i<hostCount;i++){
@@ -508,33 +527,99 @@ void sortHosts(){                 // by network name, then IP numeric
 }
 void saveHosts(){
   sortHosts();
-  String blob="network,ip,mac,ports,last_seen_s\n";
+  String blob;                    // net \t ip \t mac \t ports \t name \t note \t seen
   for(int i=0;i<hostCount;i++){
-    String p=hosts[i].ports; p.replace(" ","|"); if(p.length()==0) p="-";
-    blob+=hosts[i].net+","+hosts[i].ip+","+(hosts[i].mac.length()?hosts[i].mac:String("-"))+
-          ","+p+","+String(hosts[i].seen)+"\n";
+    String p=hosts[i].ports; if(p.length()==0) p="-";
+    blob+=san(hosts[i].net)+"\t"+hosts[i].ip+"\t"+(hosts[i].mac.length()?hosts[i].mac:String("-"))+"\t"+
+          p+"\t"+(hosts[i].name.length()?san(hosts[i].name):String("-"))+"\t"+
+          (hosts[i].note.length()?san(hosts[i].note):String("-"))+"\t"+String(hosts[i].seen)+"\n";
   }
   if(usingSD){ File f=SD_MMC.open(HOSTS_PATH,FILE_WRITE); if(f){ f.print(blob); f.close(); return; } }
-  prefs.begin("hosts",false); prefs.putString("csv", blob.substring(0, 3000)); prefs.end();
+  prefs.begin("hosts",false); prefs.putString("tsv", blob.substring(0,3000)); prefs.end();
 }
 void loadHosts(){
   String blob;
   if(usingSD && SD_MMC.exists(HOSTS_PATH)){ File f=SD_MMC.open(HOSTS_PATH,FILE_READ); if(f){ blob=f.readString(); f.close(); } }
-  else { prefs.begin("hosts",true); blob=prefs.getString("csv",""); prefs.end(); }
-  hostCount=0; int start=0; bool firstLine=true;
+  else { prefs.begin("hosts",true); blob=prefs.getString("tsv",""); prefs.end(); }
+  hostCount=0; int start=0;
   while(start<blob.length() && hostCount<HOST_MAX){
     int nl=blob.indexOf('\n',start); if(nl<0) nl=blob.length();
     String line=blob.substring(start,nl); start=nl+1;
-    if(firstLine){ firstLine=false; if(line.startsWith("network,")) continue; }
-    int c1=line.indexOf(','), c2=line.indexOf(',',c1+1),
-        c3=line.indexOf(',',c2+1), c4=line.indexOf(',',c3+1);
-    if(c1<0||c2<0||c3<0||c4<0) continue;
-    HostRec r; r.net=line.substring(0,c1); r.ip=line.substring(c1+1,c2); r.mac=line.substring(c2+1,c3);
-    String p=line.substring(c3+1,c4); p.replace("|"," "); if(p=="-") p=""; r.ports=p;
-    r.seen=(uint32_t)line.substring(c4+1).toInt();
+    if(line.indexOf('\t')<0) continue;
+    HostRec r;
+    r.net=tsvField(line,0); r.ip=tsvField(line,1); r.mac=tsvField(line,2);
+    String p=tsvField(line,3); if(p=="-")p=""; r.ports=p;
+    r.name=tsvField(line,4); if(r.name=="-")r.name="";
+    r.note=tsvField(line,5); if(r.note=="-")r.note="";
+    r.seen=(uint32_t)tsvField(line,6).toInt();
     if(r.mac=="-") r.mac="";
     hosts[hostCount++]=r;
   }
+}
+void removeHostRec(int idx){
+  if(idx<0||idx>=hostCount) return;
+  for(int i=idx;i<hostCount-1;i++) hosts[i]=hosts[i+1];
+  hostCount--;
+}
+
+// ---- Persistent WAP inventory (access points from the Wi-Fi sniffer) ----
+#define WAP_MAX 64
+struct WapRec { String ssid, enc, name, note; int ch; int rssi; uint32_t seen; };
+WapRec waps[WAP_MAX];
+int wapCount = 0;
+const char *WAPS_PATH = "/waps.tsv";
+
+int findWap(const String &ssid){
+  for(int i=0;i<wapCount;i++) if(waps[i].ssid==ssid) return i;
+  return -1;
+}
+void upsertWap(const String &ssid, int ch, const String &enc, int rssi){
+  int i=findWap(ssid);
+  if(i<0){ if(wapCount>=WAP_MAX) return; i=wapCount++; waps[i].ssid=ssid; }
+  waps[i].ch=ch; waps[i].enc=enc; waps[i].rssi=rssi; waps[i].seen=millis()/1000;
+}
+void setWapMeta(const String &ssid, const String &name, const String &note){
+  int i=findWap(ssid);
+  if(i<0){ if(wapCount>=WAP_MAX) return; i=wapCount++; waps[i].ssid=ssid; }
+  waps[i].name=san(name); waps[i].note=san(note);
+}
+void sortWaps(){ // by ssid
+  for(int i=1;i<wapCount;i++){ WapRec k=waps[i]; int j=i-1;
+    while(j>=0 && waps[j].ssid>k.ssid){ waps[j+1]=waps[j]; j--; } waps[j+1]=k; }
+}
+void saveWaps(){
+  sortWaps();
+  String blob;                    // ssid \t ch \t enc \t rssi \t name \t note \t seen
+  for(int i=0;i<wapCount;i++){
+    blob+=san(waps[i].ssid)+"\t"+String(waps[i].ch)+"\t"+waps[i].enc+"\t"+String(waps[i].rssi)+"\t"+
+          (waps[i].name.length()?san(waps[i].name):String("-"))+"\t"+
+          (waps[i].note.length()?san(waps[i].note):String("-"))+"\t"+String(waps[i].seen)+"\n";
+  }
+  if(usingSD){ File f=SD_MMC.open(WAPS_PATH,FILE_WRITE); if(f){ f.print(blob); f.close(); return; } }
+  prefs.begin("waps",false); prefs.putString("tsv", blob.substring(0,3000)); prefs.end();
+}
+void loadWaps(){
+  String blob;
+  if(usingSD && SD_MMC.exists(WAPS_PATH)){ File f=SD_MMC.open(WAPS_PATH,FILE_READ); if(f){ blob=f.readString(); f.close(); } }
+  else { prefs.begin("waps",true); blob=prefs.getString("tsv",""); prefs.end(); }
+  wapCount=0; int start=0;
+  while(start<blob.length() && wapCount<WAP_MAX){
+    int nl=blob.indexOf('\n',start); if(nl<0) nl=blob.length();
+    String line=blob.substring(start,nl); start=nl+1;
+    if(line.indexOf('\t')<0) continue;
+    WapRec r;
+    r.ssid=tsvField(line,0); r.ch=tsvField(line,1).toInt(); r.enc=tsvField(line,2);
+    r.rssi=tsvField(line,3).toInt();
+    r.name=tsvField(line,4); if(r.name=="-")r.name="";
+    r.note=tsvField(line,5); if(r.note=="-")r.note="";
+    r.seen=(uint32_t)tsvField(line,6).toInt();
+    waps[wapCount++]=r;
+  }
+}
+void removeWapRec(int idx){
+  if(idx<0||idx>=wapCount) return;
+  for(int i=idx;i<wapCount-1;i++) waps[i]=waps[i+1];
+  wapCount--;
 }
 
 // Find the station netif (the one holding our STA IP), not the AP netif.
@@ -642,35 +727,73 @@ void handlePortscan(){
   screenMode=SCR_HOME; screenDirty=true;
 }
 
-// Return the saved inventory (sorted by network, then IP).
+// ---- Database endpoints ----
+// Host inventory JSON (sorted by network, then IP) with friendly name + note.
 void handleHosts(){
   sortHosts();
   String j="[";
   for(int i=0;i<hostCount;i++){ if(i)j+=",";
     j+="{\"net\":\""+jsonEsc(hosts[i].net)+"\",\"ip\":\""+hosts[i].ip+"\",\"mac\":\""+hosts[i].mac+
-       "\",\"ports\":\""+hosts[i].ports+"\",\"seen\":"+String(hosts[i].seen)+"}";
+       "\",\"ports\":\""+hosts[i].ports+"\",\"name\":\""+jsonEsc(hosts[i].name)+
+       "\",\"note\":\""+jsonEsc(hosts[i].note)+"\",\"seen\":"+String(hosts[i].seen)+"}";
   }
   j+="]";
   server.send(200,"application/json",j);
 }
-void removeHostRec(int idx){
-  if(idx<0||idx>=hostCount) return;
-  for(int i=idx;i<hostCount-1;i++) hosts[i]=hosts[i+1];
-  hostCount--;
+// WAP inventory JSON (sorted by SSID) with friendly name + note.
+void handleWaps(){
+  sortWaps();
+  String j="[";
+  for(int i=0;i<wapCount;i++){ if(i)j+=",";
+    j+="{\"ssid\":\""+jsonEsc(waps[i].ssid)+"\",\"ch\":"+String(waps[i].ch)+",\"enc\":\""+waps[i].enc+
+       "\",\"rssi\":"+String(waps[i].rssi)+",\"name\":\""+jsonEsc(waps[i].name)+
+       "\",\"note\":\""+jsonEsc(waps[i].note)+"\",\"seen\":"+String(waps[i].seen)+"}";
+  }
+  j+="]";
+  server.send(200,"application/json",j);
 }
-// Delete one saved host (by network + ip) from the inventory and the card.
+void handleEditHost(){
+  setHostMeta(server.arg("net"), server.arg("ip"), server.arg("name"), server.arg("note"));
+  saveHosts();
+  server.send(200,"application/json","{\"ok\":true}");
+}
+void handleEditWap(){
+  setWapMeta(server.arg("ssid"), server.arg("name"), server.arg("note"));
+  saveWaps();
+  server.send(200,"application/json","{\"ok\":true}");
+}
 void handleDelHost(){
-  String net=server.arg("net"), ip=server.arg("ip");
-  int i=findHost(net,ip);
+  int i=findHost(server.arg("net"), server.arg("ip"));
   if(i>=0){ removeHostRec(i); saveHosts(); }
   server.send(200,"application/json","{\"ok\":true}");
 }
-// Wipe the whole inventory from the card.
+void handleDelWap(){
+  int i=findWap(server.arg("ssid"));
+  if(i>=0){ removeWapRec(i); saveWaps(); }
+  server.send(200,"application/json","{\"ok\":true}");
+}
 void handleClearHosts(){
   hostCount=0;
   if(usingSD) SD_MMC.remove(HOSTS_PATH);
   else { prefs.begin("hosts",false); prefs.clear(); prefs.end(); }
   server.send(200,"application/json","{\"ok\":true}");
+}
+void handleClearWaps(){
+  wapCount=0;
+  if(usingSD) SD_MMC.remove(WAPS_PATH);
+  else { prefs.begin("waps",false); prefs.clear(); prefs.end(); }
+  server.send(200,"application/json","{\"ok\":true}");
+}
+// Join a saved network by SSID using its stored password (tap-to-join).
+void handleJoinSaved(){
+  String ssid=server.arg("ssid");
+  int idx=-1; for(int i=0;i<savedCount;i++) if(savedSsid[i]==ssid){ idx=i; break; }
+  if(idx<0){ server.send(200,"application/json","{\"connected\":false,\"error\":\"not saved\"}"); return; }
+  bool ok=tryConnect(savedSsid[idx], savedPass[idx], 12000);
+  String ip = ok ? WiFi.localIP().toString() : "";
+  server.send(200,"application/json",
+    String("{\"connected\":")+(ok?"true":"false")+",\"ip\":\""+ip+"\"}");
+  screenMode=SCR_HOME; screenDirty=true;
 }
 
 // Auto-join best saved network that's currently in range (priority order).
@@ -715,7 +838,8 @@ void setup(){
   bhFillTo(30);
   loadSaved();
   loadHosts();
-  Serial.printf("Loaded %d saved network(s), %d host record(s)\n", savedCount, hostCount);
+  loadWaps();
+  Serial.printf("Loaded %d saved net(s), %d host(s), %d wap(s)\n", savedCount, hostCount, wapCount);
   bhFillTo(50);
 
   WiFi.mode(WIFI_AP_STA);
@@ -736,8 +860,14 @@ void setup(){
   server.on("/arp",handleArp);
   server.on("/portscan",handlePortscan);
   server.on("/hosts",handleHosts);
+  server.on("/waps",handleWaps);
+  server.on("/edithost",HTTP_POST,handleEditHost);
+  server.on("/editwap",HTTP_POST,handleEditWap);
   server.on("/delhost",HTTP_POST,handleDelHost);
+  server.on("/delwap",HTTP_POST,handleDelWap);
   server.on("/clearhosts",HTTP_POST,handleClearHosts);
+  server.on("/clearwaps",HTTP_POST,handleClearWaps);
+  server.on("/joinsaved",handleJoinSaved);
   server.on("/status",handleStatus);
   server.onNotFound(handleRoot);
   server.begin();
