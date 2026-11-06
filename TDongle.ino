@@ -232,7 +232,12 @@ void removeSaved(int idx) {
 }
 
 // ================= Screen =================
-void drawHome(){
+// Home screen is drawn in two parts: static labels once (drawHomeStatic),
+// then dynamic fields repainted ONLY when their value changes (updateHome).
+struct HomeState { bool valid; bool connected; String ssid; String ip; int saved; bool sd; };
+HomeState lastHome = { false, false, "", "", -1, false };
+
+void drawHomeStatic(){
   fillScreen(C_BLACK);
   drawText(4,2,"SAUR0N COMPANION",C_ORANGE,C_BLACK,1);
   fillRect(4,12,152,1,C_GREY);
@@ -241,17 +246,41 @@ void drawHome(){
   drawText(4,30,"IP:",C_GREY,C_BLACK,1);
   drawText(28,30,"192.168.4.1",C_WHITE,C_BLACK,1);
   drawText(4,46,"WIFI:",C_GREY,C_BLACK,1);
-  if(WiFi.status()==WL_CONNECTED){
-    drawText(44,46,WiFi.SSID().c_str(),C_GREEN,C_BLACK,1);
-    drawText(4,58,"STA:",C_GREY,C_BLACK,1);
-    drawText(40,58,WiFi.localIP().toString().c_str(),C_WHITE,C_BLACK,1);
-    setLED(0,20,0);
-  }else{
-    drawText(44,46,savedCount?"searching":"no saved",C_YELLOW,C_BLACK,1);
-    setLED(20,8,0);
-  }
-  char st[24]; snprintf(st,sizeof(st),"store:%s  saved:%d",usingSD?"SD":"flash",savedCount);
+  drawText(4,58,"STA:",C_GREY,C_BLACK,1);
+  lastHome.valid=false;   // force a full dynamic repaint next
+}
+
+// Repaint only the fields that changed. force=true repaints everything.
+void updateHome(bool force){
+  bool connected = WiFi.status()==WL_CONNECTED;
+  String ssid = connected ? WiFi.SSID() : String("");
+  String ip   = connected ? WiFi.localIP().toString() : String("");
+
+  bool changed = force || !lastHome.valid ||
+                 connected!=lastHome.connected || ssid!=lastHome.ssid ||
+                 ip!=lastHome.ip || savedCount!=lastHome.saved || usingSD!=lastHome.sd;
+  if(!changed) return;
+
+  // WIFI value (row 46)
+  fillRect(44,46,116,8,C_BLACK);
+  if(connected) drawText(44,46,ssid.c_str(),C_GREEN,C_BLACK,1);
+  else          drawText(44,46,savedCount?"searching":"no saved",C_YELLOW,C_BLACK,1);
+
+  // STA IP (row 58)
+  fillRect(40,58,120,8,C_BLACK);
+  if(connected) drawText(40,58,ip.c_str(),C_WHITE,C_BLACK,1);
+  else          drawText(40,58,"--",C_GREY,C_BLACK,1);
+
+  // store + saved count (row 70)
+  fillRect(4,70,152,8,C_BLACK);
+  char st[28]; snprintf(st,sizeof(st),"store:%s  saved:%d",usingSD?"SD":"flash",savedCount);
   drawText(4,70,st,C_GREY,C_BLACK,1);
+
+  // LED only when the connection state itself flips
+  if(force || connected!=lastHome.connected)
+    setLED(connected?0:20, connected?20:8, 0);
+
+  lastHome = { true, connected, ssid, ip, savedCount, usingSD };
 }
 void drawScanScreen(int n){
   fillScreen(C_BLACK);
@@ -455,9 +484,12 @@ void loop(){
     scanLedActive=false; screenMode=SCR_HOME; screenDirty=true;
   }
 
-  static uint32_t lastHome=0;
-  if(screenMode==SCR_HOME && (screenDirty || millis()-lastHome>3000)){
-    lastHome=millis(); screenDirty=false; drawHome();
+  // Home screen: redraw labels only when (re)entering; otherwise poll state
+  // twice a second and repaint a field only if it actually changed.
+  static uint32_t lastCheck=0;
+  if(screenMode==SCR_HOME){
+    if(screenDirty){ screenDirty=false; drawHomeStatic(); updateHome(true); lastCheck=millis(); }
+    else if(millis()-lastCheck>500){ lastCheck=millis(); updateHome(false); }
   }
   delay(5);
 }
