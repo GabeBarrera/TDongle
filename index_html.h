@@ -1,12 +1,12 @@
 #pragma once
-// SAURON companion web page. Kept in a separate header because the Arduino
+// Signal Sniffer web page. Kept in a separate header because the Arduino
 // sketch preprocessor mishandles large C++ raw-string literals placed in
 // the .ino itself (it tries to compile the HTML/JS as code).
 
 const char INDEX_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SAURON Companion</title>
+<title>Signal Sniffer</title>
 <style>
   :root{--bg:#0d0b07;--panel:#1a150d;--ink:#f1e6d0;--mute:#b99b5e;--acc:#e8a33d;--line:#3a2f1a;--ok:#5fd37a;--bad:#e05a4a}
   *{box-sizing:border-box}
@@ -49,7 +49,7 @@ const char INDEX_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
   #addBox{display:none;margin-top:10px}
 </style></head>
 <body>
-<header><h1>SAUR0N</h1><div class="sub">T-Dongle-S3 Wi-Fi Companion</div></header>
+<header><h1>SIGNAL SNIFFER</h1><div class="sub">T-Dongle-S3 &middot; AP: BL00DH0UND</div></header>
 <main>
   <div class="status" id="status"><span class="muted">Loading status...</span></div>
   <div class="tabs">

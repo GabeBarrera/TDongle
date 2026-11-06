@@ -1,7 +1,7 @@
 /*
   LilyGO T-Dongle-S3 — AP+STA Wi-Fi Companion (SD-backed, priority list)
   ---------------------------------------------------------------------
-  - Hosts access point "SAUR0N" AND joins a saved network (AP+STA).
+  - Hosts access point "BL00DH0UND" AND joins a saved network (AP+STA).
   - Saved Wi-Fi credentials are stored on the microSD card (/wifi.conf),
     with a flash (NVS) fallback if no card is present.
   - Multiple saved networks kept in a PRIORITY ORDER. On boot the dongle
@@ -20,7 +20,7 @@
     Partition Scheme: 16M Flash (3MB APP/9.9MB FATFS)
 
   Upload: hold button while plugging in, upload, then replug to run.
-  Then join Wi-Fi "SAUR0N" / "Hacktheplanet!" and open http://192.168.4.1
+  Then join Wi-Fi "BL00DH0UND" / "Hacktheplanet!" and open http://192.168.4.1
 */
 
 #include <Arduino.h>
@@ -34,10 +34,12 @@
 #include "lwip/etharp.h"     // ARP table access (already linked by Wi-Fi)
 #include "lwip/netif.h"
 #include "index_html.h"      // web page (PROGMEM raw string)
+#include "bh_image.h"        // bloodhound boot-splash bitmap
 
 // ================= AP credentials =================
-const char *AP_SSID = "SAUR0N";
+const char *AP_SSID = "BL00DH0UND";
 const char *AP_PASS = "Hacktheplanet!";
+const char *DEV_NAME = "SIGNAL SNIFFER";
 
 // ================= Pin map (T-Dongle-S3) =================
 #define PIN_LCD_MOSI   3
@@ -154,6 +156,44 @@ void drawText(int x,int y,const char*str,uint16_t fg,uint16_t bg,uint8_t s){
   while(*str){drawChar(x,y,*str++,fg,bg,s);x+=6*s;}
 }
 
+// ================= Bloodhound boot splash =================
+static inline bool bhInk(int x,int by){
+  uint16_t idx = by*BH_BYTES_PER_ROW + (x>>3);
+  uint8_t b = pgm_read_byte(&BH_BITMAP[idx]);
+  return (b >> (7-(x&7))) & 1;
+}
+// draw one bitmap row (ink runs) in 'color', at its screen position
+void bhDrawRow(int by, uint16_t color){
+  int sy = BH_Y + by, x = 0;
+  while(x < BH_W){
+    if(bhInk(x,by)){
+      int start = x;
+      while(x < BH_W && bhInk(x,by)) x++;
+      fillRect(BH_X+start, sy, x-start, 1, color);
+    } else x++;
+  }
+}
+void bhDrawBase(){               // dog in white on black
+  fillScreen(C_BLACK);
+  for(int by=0; by<BH_H; by++) bhDrawRow(by, C_WHITE);
+}
+int bhWaterTop = BH_Y + BH_H;    // screen row of current red top (none yet)
+int bhCur = 0;                   // current fill percent
+void bhFillTo(int pct){          // animate red waterline up to pct
+  if(pct>100) pct=100;
+  while(bhCur < pct){
+    bhCur++;
+    int filled = (BH_H * bhCur) / 100;      // rows filled from bottom
+    int newTop = BH_Y + BH_H - filled;
+    for(int sy=newTop; sy<bhWaterTop; sy++){
+      int by = sy - BH_Y;
+      if(by>=0 && by<BH_H) bhDrawRow(by, C_RED);
+    }
+    if(newTop < bhWaterTop) bhWaterTop = newTop;
+    delay(10);
+  }
+}
+
 // ================= Saved-network store =================
 #define MAX_SAVED 12
 String savedSsid[MAX_SAVED];
@@ -242,7 +282,7 @@ HomeState lastHome = { false, false, "", "", -1, false };
 
 void drawHomeStatic(){
   fillScreen(C_BLACK);
-  drawText(4,2,"SAUR0N COMPANION",C_ORANGE,C_BLACK,1);
+  drawText(4,2,DEV_NAME,C_ORANGE,C_BLACK,1);
   fillRect(4,12,152,1,C_GREY);
   drawText(4,18,"AP:",C_GREY,C_BLACK,1);
   drawText(28,18,AP_SSID,C_CYAN,C_BLACK,1);
@@ -536,26 +576,32 @@ bool mountSD(){
 // ================= Setup / loop =================
 void setup(){
   Serial.begin(115200); delay(300);
-  Serial.println("\nT-Dongle-S3 SAURON companion");
+  Serial.println("\nSignal Sniffer (T-Dongle-S3)");
 
   pinMode(PIN_BTN,INPUT_PULLUP);
   pinMode(PIN_LED_DATA,OUTPUT);digitalWrite(PIN_LED_DATA,LOW);
   pinMode(PIN_LED_CLK,OUTPUT);digitalWrite(PIN_LED_CLK,LOW);
   setLED(20,8,0);
 
-  lcdInit(); fillScreen(C_BLACK);
-  drawText(4,30,"STARTING...",C_ORANGE,C_BLACK,2);
+  lcdInit();
+  bhDrawBase();                 // bloodhound splash (white on black)
+  bhFillTo(8);
 
   usingSD = mountSD();
   Serial.printf("Storage: %s\n", usingSD ? "SD card" : "flash (no SD)");
+  bhFillTo(30);
   loadSaved();
   Serial.printf("Loaded %d saved network(s)\n", savedCount);
+  bhFillTo(50);
 
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID,AP_PASS);
   Serial.printf("AP '%s' at %s\n",AP_SSID,WiFi.softAPIP().toString().c_str());
+  bhFillTo(70);
 
   autoJoinBest();
+  bhFillTo(100);
+  delay(500);
 
   server.on("/",handleRoot);
   server.on("/scan",handleScan);
