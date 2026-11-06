@@ -53,8 +53,9 @@ const char INDEX_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 <main>
   <div class="status" id="status"><span class="muted">Loading status...</span></div>
   <div class="tabs">
-    <button id="tScan" class="active" onclick="show('scan')">Wi-Fi Scanner</button>
+    <button id="tScan" class="active" onclick="show('scan')">Scanner</button>
     <button id="tSet" onclick="show('settings')">Settings</button>
+    <button id="tNet" onclick="show('network')">Network</button>
   </div>
 
   <section id="scan" class="view active">
@@ -79,15 +80,29 @@ const char INDEX_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
       <div id="setMsg" class="hint"></div>
     </div>
   </section>
+
+  <section id="network" class="view">
+    <h3>Host discovery (ARP sweep)</h3>
+    <p class="hint">Sweeps the /24 of the network the dongle is joined to and lists live hosts. For networks you're authorized to assess. LED turns purple while scanning.</p>
+    <button class="btn" onclick="arpSweep()">ARP sweep</button>
+    <div id="hostList"></div>
+    <h3>Port scan</h3>
+    <p class="hint">Checks a short list of common TCP ports on one host.</p>
+    <label for="pip">Target IP</label>
+    <input id="pip" placeholder="tap a host above, or type an IP">
+    <button class="btn" onclick="portScan()">Scan ports</button>
+    <div id="portResult" class="hint"></div>
+  </section>
 </main>
 <script>
 function esc(s){return (s||'').replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function bars(r){var n=r>-60?4:r>-70?3:r>-80?2:1;var f='';for(var i=0;i<4;i++)f+=i<n?'|':'.';return f;}
 function show(v){
-  document.getElementById('scan').classList.toggle('active',v=='scan');
-  document.getElementById('settings').classList.toggle('active',v=='settings');
-  document.getElementById('tScan').classList.toggle('active',v=='scan');
-  document.getElementById('tSet').classList.toggle('active',v=='settings');
+  var map={scan:'tScan',settings:'tSet',network:'tNet'};
+  for(var id in map){
+    document.getElementById(id).classList.toggle('active',id==v);
+    document.getElementById(map[id]).classList.toggle('active',id==v);
+  }
   if(v=='settings') loadSaved();
 }
 function refreshStatus(){
@@ -208,6 +223,31 @@ function connect(){
 function forget(ssid){
   fetch('/forget',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
     body:'ssid='+encodeURIComponent(ssid)}).then(()=>{loadSaved();refreshStatus();});
+}
+/* ---- Network tab: ARP sweep + port scan ---- */
+function arpSweep(){
+  var el=document.getElementById('hostList');
+  el.innerHTML='<p><span class="spin"></span>Sweeping subnet... LED is purple</p>';
+  fetch('/arp').then(r=>r.json()).then(d=>{
+    if(d.error){el.innerHTML='<p class="bad">'+esc(d.error)+'</p>';return;}
+    var hosts=d.hosts||[];
+    if(!hosts.length){el.innerHTML='<p class="hint">No hosts answered. On some networks clients ignore ARP from unknown hosts.</p>';return;}
+    el.innerHTML='<p class="hint">'+hosts.length+' host(s) on '+esc(d.self)+'\'s subnet. Tap one to port-scan it.</p>'+
+      hosts.map(h=>'<div class="net pick" onclick="pip(\''+h.ip+'\')"><div class="nm">'+h.ip+
+      '</div><div class="meta">'+h.mac+'</div></div>').join('');
+  }).catch(()=>{el.innerHTML='<p class="bad">Sweep failed.</p>';});
+}
+function pip(ip){document.getElementById('pip').value=ip;}
+function portScan(){
+  var ip=document.getElementById('pip').value.trim();
+  var el=document.getElementById('portResult');
+  if(!ip){el.innerHTML='<span class="bad">Enter an IP.</span>';return;}
+  el.innerHTML='<span class="spin"></span>Scanning '+esc(ip)+'...';
+  fetch('/portscan?ip='+encodeURIComponent(ip)).then(r=>r.json()).then(d=>{
+    if(d.error){el.innerHTML='<span class="bad">'+esc(d.error)+'</span>';return;}
+    if(!d.open.length){el.innerHTML='<span class="muted">No common ports open on '+esc(ip)+'.</span>';return;}
+    el.innerHTML='<b>'+esc(ip)+'</b> open: '+d.open.join(', ');
+  }).catch(()=>{el.innerHTML='<span class="bad">Scan failed.</span>';});
 }
 refreshStatus();setInterval(refreshStatus,4000);
 </script>

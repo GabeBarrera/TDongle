@@ -30,7 +30,10 @@
 #include <Preferences.h>
 #include <FS.h>
 #include <SD_MMC.h>
-#include "index_html.h"   // web page (PROGMEM raw string)
+#include <WiFiClient.h>
+#include "lwip/etharp.h"     // ARP table access (already linked by Wi-Fi)
+#include "lwip/netif.h"
+#include "index_html.h"      // web page (PROGMEM raw string)
 
 // ================= AP credentials =================
 const char *AP_SSID = "SAUR0N";
@@ -412,6 +415,101 @@ void handleStatus(){
   server.send(200,"application/json",s);
 }
 
+// ================= Network discovery (ARP sweep + TCP port scan) =================
+// For authorized use on networks you own or are permitted to assess.
+#define DISC_MAX 64
+String discIp[DISC_MAX];
+String discMac[DISC_MAX];
+int    discCount = 0;
+
+void discAdd(const String &ip, const String &mac){
+  for(int i=0;i<discCount;i++) if(discIp[i]==ip) return;   // dedup
+  if(discCount>=DISC_MAX) return;
+  discIp[discCount]=ip; discMac[discCount]=mac; discCount++;
+}
+// Pull current stable entries out of the lwIP ARP cache into our list.
+void drainArpTable(){
+  for(size_t i=0;i<10;i++){   // default ARP_TABLE_SIZE
+    ip4_addr_t *ipaddr=nullptr; struct netif *nif=nullptr; struct eth_addr *eth=nullptr;
+    if(etharp_get_entry(i,&ipaddr,&nif,&eth)==1 && ipaddr && eth){
+      IPAddress ip(ip4_addr_get_u32(ipaddr));
+      char m[18];
+      snprintf(m,sizeof(m),"%02x:%02x:%02x:%02x:%02x:%02x",
+               eth->addr[0],eth->addr[1],eth->addr[2],eth->addr[3],eth->addr[4],eth->addr[5]);
+      discAdd(ip.toString(), String(m));
+    }
+  }
+}
+void drawDiscScreen(const char *title, int count){
+  fillScreen(C_BLACK);
+  drawText(4,2,title,C_CYAN,C_BLACK,1);
+  char h[16]; snprintf(h,sizeof(h),"%d up",count);
+  drawText(120,2,h,C_WHITE,C_BLACK,1);
+  fillRect(4,12,152,1,C_GREY);
+  int rows=count<7?count:7;
+  for(int i=0;i<rows;i++) drawText(4,16+i*9,discIp[i].c_str(),C_GREEN,C_BLACK,1);
+}
+
+// ARP-sweep the /24 of the station IP. Needs an active STA connection.
+void handleArp(){
+  if(WiFi.status()!=WL_CONNECTED){
+    server.send(200,"application/json","{\"error\":\"join a network first\"}"); return;
+  }
+  struct netif *nif=netif_default;
+  if(!nif){ server.send(200,"application/json","{\"error\":\"no netif\"}"); return; }
+
+  setLED(140,0,255,8);                 // purple = discovery
+  screenMode=SCR_SCAN;                 // borrow scan mode so loop won't redraw home
+  discCount=0;
+  IPAddress self=WiFi.localIP();
+  drawDiscScreen("ARP SWEEP", 0);
+
+  for(int host=1; host<=254; host++){
+    if(host==self[3]) continue;
+    ip4_addr_t t; IP4_ADDR(&t, self[0],self[1],self[2],host);
+    etharp_request(nif,&t);
+    delay(3);
+    if(host%16==0){ drainArpTable(); drawDiscScreen("ARP SWEEP", discCount); }
+  }
+  delay(500);
+  drainArpTable();
+  drawDiscScreen("ARP SWEEP", discCount);
+
+  String j="{\"self\":\""+self.toString()+"\",\"hosts\":[";
+  for(int i=0;i<discCount;i++){ if(i)j+=",";
+    j+="{\"ip\":\""+discIp[i]+"\",\"mac\":\""+discMac[i]+"\"}";
+  }
+  j+="]}";
+  server.send(200,"application/json",j);
+  screenMode=SCR_HOME; screenDirty=true;
+}
+
+// TCP connect scan of common ports on one host.
+void handlePortscan(){
+  String ipStr=server.arg("ip");
+  IPAddress ip;
+  if(!ip.fromString(ipStr)){ server.send(200,"application/json","{\"error\":\"bad ip\"}"); return; }
+
+  static const uint16_t PORTS[]={21,22,23,25,53,80,110,135,139,143,443,445,
+                                 554,587,993,995,1723,3306,3389,5900,8080,8443};
+  const int NP=sizeof(PORTS)/sizeof(PORTS[0]);
+  setLED(140,0,255,8);
+
+  String j="{\"ip\":\""+ipStr+"\",\"open\":[";
+  bool first=true;
+  for(int i=0;i<NP;i++){
+    WiFiClient c;
+    if(c.connect(ip,PORTS[i],250)){
+      if(!first)j+=","; first=false;
+      j+=String(PORTS[i]);
+      c.stop();
+    }
+  }
+  j+="]}";
+  server.send(200,"application/json",j);
+  screenDirty=true;
+}
+
 // Auto-join best saved network that's currently in range (priority order).
 void autoJoinBest(){
   if(savedCount==0)return;
@@ -465,6 +563,8 @@ void setup(){
   server.on("/connect",HTTP_POST,handleConnect);
   server.on("/forget",HTTP_POST,handleForget);
   server.on("/reorder",HTTP_POST,handleReorder);
+  server.on("/arp",handleArp);
+  server.on("/portscan",handlePortscan);
   server.on("/status",handleStatus);
   server.onNotFound(handleRoot);
   server.begin();
