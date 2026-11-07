@@ -61,12 +61,13 @@ const char *DEV_NAME = "SIGNAL SNIFFER";
 #define SD_D2   21
 #define SD_D3   18
 
-// ================= Screen geometry =================
-#define LCD_W 160
-#define LCD_H 80
-#define X_OFFSET 1
-#define Y_OFFSET 26
-#define MADCTL_VALUE 0xA8   // 180-degree flipped landscape
+// ================= Screen geometry (runtime, set by orientation) =================
+// Landscape: 160x80, offsets 1/26, MADCTL 0xA8 (or 0x68 inverted).
+// Portrait : 80x160, offsets 26/1, MADCTL 0x88 (or 0x48 inverted).
+int     scrW=160, scrH=80;      // current visible size
+int     xOff=1,  yOff=26;       // RAM offsets for the visible window
+uint8_t madctl=0xA8;            // current MADCTL
+bool    isPortrait=false, isInverted=false;
 
 // ================= Colors =================
 #define C_BLACK  0x0000
@@ -86,15 +87,15 @@ void writeCmd(uint8_t c){digitalWrite(PIN_LCD_DC,LOW);digitalWrite(PIN_LCD_CS,LO
 void writeData(const uint8_t*d,size_t n){digitalWrite(PIN_LCD_CS,LOW);SPI.beginTransaction(lcdSPI);while(n--)SPI.transfer(*d++);SPI.endTransaction();digitalWrite(PIN_LCD_CS,HIGH);}
 void writeData1(uint8_t d){writeData(&d,1);}
 void setWindow(uint16_t x0,uint16_t y0,uint16_t x1,uint16_t y1){
-  x0+=X_OFFSET;x1+=X_OFFSET;y0+=Y_OFFSET;y1+=Y_OFFSET;
+  x0+=xOff;x1+=xOff;y0+=yOff;y1+=yOff;
   uint8_t ca[4]={(uint8_t)(x0>>8),(uint8_t)x0,(uint8_t)(x1>>8),(uint8_t)x1};
   uint8_t ra[4]={(uint8_t)(y0>>8),(uint8_t)y0,(uint8_t)(y1>>8),(uint8_t)y1};
   writeCmd(0x2A);writeData(ca,4);writeCmd(0x2B);writeData(ra,4);writeCmd(0x2C);
 }
 void fillRect(int x,int y,int w,int h,uint16_t color){
-  if(x>=LCD_W||y>=LCD_H||w<=0||h<=0)return;
+  if(x>=scrW||y>=scrH||w<=0||h<=0)return;
   if(x<0){w+=x;x=0;}if(y<0){h+=y;y=0;}
-  if(x+w>LCD_W)w=LCD_W-x;if(y+h>LCD_H)h=LCD_H-y;
+  if(x+w>scrW)w=scrW-x;if(y+h>scrH)h=scrH-y;
   if(w<=0||h<=0)return;              // fully clipped off-screen -> nothing to draw
   setWindow(x,y,x+w-1,y+h-1);
   uint32_t n=(uint32_t)w*h;
@@ -102,7 +103,7 @@ void fillRect(int x,int y,int w,int h,uint16_t color){
   while(n--)SPI.transfer16(color);
   SPI.endTransaction();digitalWrite(PIN_LCD_CS,HIGH);
 }
-void fillScreen(uint16_t c){fillRect(0,0,LCD_W,LCD_H,c);}
+void fillScreen(uint16_t c){fillRect(0,0,scrW,scrH,c);}
 void lcdInit(){
   pinMode(PIN_LCD_CS,OUTPUT);digitalWrite(PIN_LCD_CS,HIGH);
   pinMode(PIN_LCD_DC,OUTPUT);digitalWrite(PIN_LCD_DC,HIGH);
@@ -113,9 +114,19 @@ void lcdInit(){
   digitalWrite(PIN_LCD_RST,LOW);delay(20);
   digitalWrite(PIN_LCD_RST,HIGH);delay(120);
   writeCmd(0x01);delay(150);writeCmd(0x11);delay(255);
-  writeCmd(0x3A);writeData1(0x05);writeCmd(0x36);writeData1(MADCTL_VALUE);
+  writeCmd(0x3A);writeData1(0x05);writeCmd(0x36);writeData1(madctl);
   writeCmd(0x21);writeCmd(0x13);fillScreen(C_BLACK);writeCmd(0x29);delay(20);
   digitalWrite(PIN_LCD_BL,LOW);
+}
+
+// Apply an orientation: update dimensions/offsets/MADCTL and resend MADCTL.
+// portrait=false -> 160x80 landscape; true -> 80x160 portrait (USB end up).
+// inverted flips the chosen mode 180 degrees.
+void setOrientation(bool portrait, bool inverted){
+  isPortrait=portrait; isInverted=inverted;
+  if(!portrait){ scrW=160; scrH=80; xOff=1;  yOff=26; madctl=inverted?0x68:0xA8; }
+  else         { scrW=80;  scrH=160; xOff=26; yOff=1;  madctl=inverted?0x48:0x88; }
+  writeCmd(0x36); writeData1(madctl);
 }
 
 // ================= APA102 LED =================
@@ -204,9 +215,10 @@ static inline bool sprInk(int f,int x,int by){
   uint8_t b=pgm_read_byte(&SPR_BITMAP[f][by*SPR_BYTES_PER_ROW+(x>>3)]);
   return (b>>(7-(x&7)))&1;
 }
+int sprYpos=16;                            // sprite band top (recomputed per run)
 void drawSprite(int f,int x){              // red dog frame f, left edge at x
   for(int by=0;by<SPR_H;by++){
-    int sy=SPR_Y+by, cx=0;
+    int sy=sprYpos+by, cx=0;
     while(cx<SPR_W){
       if(sprInk(f,cx,by)){ int s=cx; while(cx<SPR_W && sprInk(f,cx,by)) cx++; fillRect(x+s,sy,cx-s,1,C_RED); }
       else cx++;
@@ -217,12 +229,13 @@ int sprX=160, sprFrame=0;
 void sprBegin(const char *label){
   fillScreen(C_BLACK);
   drawText(4,2,label,C_RED,C_BLACK,1);
-  sprX=160; sprFrame=0;
+  sprYpos=(scrH-SPR_H)/2; if(sprYpos<12) sprYpos=12;   // center vertically
+  sprX=scrW; sprFrame=0;
 }
 void sprTick(){                            // advance one frame, dog trots right->left
-  fillRect(0,SPR_Y,160,SPR_H,C_BLACK);     // clear just the sprite band
+  fillRect(0,sprYpos,scrW,SPR_H,C_BLACK);  // clear just the sprite band
   drawSprite(sprFrame&3, sprX);
-  sprX-=7; if(sprX < -SPR_W) sprX=160;     // wrap around
+  sprX-=7; if(sprX < -SPR_W) sprX=scrW;     // wrap around
   sprFrame++;
 }
 
@@ -307,25 +320,54 @@ void removeSaved(int idx) {
 }
 
 // ================= Screen =================
-// Home screen is drawn in two parts: static labels once (drawHomeStatic),
-// then dynamic fields repainted ONLY when their value changes (updateHome).
+// Home screen is fully redrawn only when a value changes (or orientation flips),
+// in the layout that fits the current orientation. No periodic repaint.
 struct HomeState { bool valid; bool connected; String ssid; String ip; int saved; bool sd; };
 HomeState lastHome = { false, false, "", "", -1, false };
 
-void drawHomeStatic(){
+String truncStr(String s,int maxc){ if((int)s.length()>maxc) s=s.substring(0,maxc); return s; }
+
+void drawHomeLandscape(bool connected,const String &ssid,const String &ip){   // 160x80
   fillScreen(C_BLACK);
   drawText(4,2,DEV_NAME,C_ORANGE,C_BLACK,1);
   fillRect(4,12,152,1,C_GREY);
   drawText(4,18,"AP:",C_GREY,C_BLACK,1);
-  drawText(28,18,AP_SSID,C_RED,C_BLACK,1);   // AP name in red
+  drawText(28,18,AP_SSID,C_RED,C_BLACK,1);
   drawText(4,30,"IP:",C_GREY,C_BLACK,1);
   drawText(28,30,"192.168.4.1",C_WHITE,C_BLACK,1);
   drawText(4,46,"WIFI:",C_GREY,C_BLACK,1);
+  if(connected) drawText(44,46,ssid.c_str(),C_GREEN,C_BLACK,1);
+  else          drawText(44,46,savedCount?"searching":"no saved",C_YELLOW,C_BLACK,1);
   drawText(4,58,"STA:",C_GREY,C_BLACK,1);
-  lastHome.valid=false;   // force a full dynamic repaint next
+  if(connected) drawText(40,58,ip.c_str(),C_WHITE,C_BLACK,1);
+  else          drawText(40,58,"--",C_GREY,C_BLACK,1);
+  char st[28]; snprintf(st,sizeof(st),"store:%s  saved:%d",usingSD?"SD":"flash",savedCount);
+  drawText(4,70,st,C_GREY,C_BLACK,1);
 }
 
-// Repaint only the fields that changed. force=true repaints everything.
+void drawHomePortrait(bool connected,const String &ssid,const String &ip){   // 80x160
+  fillScreen(C_BLACK);
+  drawText(4,2,"SIGNAL",C_ORANGE,C_BLACK,1);
+  drawText(4,12,"SNIFFER",C_ORANGE,C_BLACK,1);
+  fillRect(4,22,72,1,C_GREY);
+  drawText(4,28,"AP",C_GREY,C_BLACK,1);
+  drawText(4,38,truncStr(AP_SSID,13).c_str(),C_RED,C_BLACK,1);
+  drawText(4,50,"IP",C_GREY,C_BLACK,1);
+  drawText(4,60,"192.168.4.1",C_WHITE,C_BLACK,1);
+  fillRect(4,72,72,1,C_GREY);
+  drawText(4,78,"WIFI",C_GREY,C_BLACK,1);
+  if(connected) drawText(4,88,truncStr(ssid,13).c_str(),C_GREEN,C_BLACK,1);
+  else          drawText(4,88,savedCount?"searching":"no saved",C_YELLOW,C_BLACK,1);
+  drawText(4,100,"STA",C_GREY,C_BLACK,1);
+  if(connected) drawText(4,110,truncStr(ip,13).c_str(),C_WHITE,C_BLACK,1);
+  else          drawText(4,110,"--",C_GREY,C_BLACK,1);
+  fillRect(4,122,72,1,C_GREY);
+  char st[16]; snprintf(st,sizeof(st),"store:%s",usingSD?"SD":"flash");
+  drawText(4,128,st,C_GREY,C_BLACK,1);
+  char sv[16]; snprintf(sv,sizeof(sv),"saved:%d",savedCount);
+  drawText(4,140,sv,C_GREY,C_BLACK,1);
+}
+
 void updateHome(bool force){
   bool connected = WiFi.status()==WL_CONNECTED;
   String ssid = connected ? WiFi.SSID() : String("");
@@ -336,22 +378,9 @@ void updateHome(bool force){
                  ip!=lastHome.ip || savedCount!=lastHome.saved || usingSD!=lastHome.sd;
   if(!changed) return;
 
-  // WIFI value (row 46)
-  fillRect(44,46,116,8,C_BLACK);
-  if(connected) drawText(44,46,ssid.c_str(),C_GREEN,C_BLACK,1);
-  else          drawText(44,46,savedCount?"searching":"no saved",C_YELLOW,C_BLACK,1);
+  if(isPortrait) drawHomePortrait(connected,ssid,ip);
+  else           drawHomeLandscape(connected,ssid,ip);
 
-  // STA IP (row 58)
-  fillRect(40,58,120,8,C_BLACK);
-  if(connected) drawText(40,58,ip.c_str(),C_WHITE,C_BLACK,1);
-  else          drawText(40,58,"--",C_GREY,C_BLACK,1);
-
-  // store + saved count (row 70)
-  fillRect(4,70,152,8,C_BLACK);
-  char st[28]; snprintf(st,sizeof(st),"store:%s  saved:%d",usingSD?"SD":"flash",savedCount);
-  drawText(4,70,st,C_GREY,C_BLACK,1);
-
-  // LED only when the connection state itself flips
   if(force || connected!=lastHome.connected)
     setLED(connected?0:20, connected?20:8, 0);
 
@@ -494,8 +523,33 @@ void handleStatus(){
   s+=",\"ap\":\""+String(AP_SSID)+"\"";
   s+=",\"storage\":\""+String(usingSD?"SD":"flash")+"\"";
   s+=",\"clients\":"+String(WiFi.softAPgetStationNum());
+  s+=",\"portrait\":"+String(isPortrait?"true":"false");
+  s+=",\"invert\":"+String(isInverted?"true":"false");
   s+="}";
   server.send(200,"application/json",s);
+}
+
+// ---- Screen orientation (persisted to flash) ----
+void saveOrientation(){
+  prefs.begin("disp",false);
+  prefs.putBool("portrait",isPortrait); prefs.putBool("invert",isInverted);
+  prefs.end();
+}
+void loadOrientation(){
+  prefs.begin("disp",true);
+  bool p=prefs.getBool("portrait",false), inv=prefs.getBool("invert",false);
+  prefs.end();
+  setOrientation(p,inv);
+}
+// POST /orient?portrait=0|1&invert=0|1 -> apply, save, redraw
+void handleOrient(){
+  bool p = server.arg("portrait")=="1";
+  bool inv = server.arg("invert")=="1";
+  setOrientation(p,inv);
+  saveOrientation();
+  lastHome.valid=false; screenMode=SCR_HOME; screenDirty=true;
+  server.send(200,"application/json",
+    String("{\"portrait\":")+(p?"true":"false")+",\"invert\":"+(inv?"true":"false")+"}");
 }
 
 // ================= Network discovery (ARP sweep + TCP port scan) =================
@@ -726,15 +780,67 @@ void handleArp(){
   screenMode=SCR_HOME; screenDirty=true;
 }
 
-// TCP connect scan of common ports on one host. Saves open ports to the inventory.
+// ---- Configurable port list for the Port Scanner (persisted to flash) ----
+#define MAX_PORTS 48
+uint16_t scanPorts[MAX_PORTS];
+int scanPortCount=0;
+const uint16_t DEFAULT_PORTS[]={21,22,23,25,53,80,110,135,139,143,443,445,
+                                554,587,993,995,1723,3306,3389,5900,8080,8443};
+void resetPorts(){
+  scanPortCount=0;
+  for(uint16_t p : DEFAULT_PORTS) if(scanPortCount<MAX_PORTS) scanPorts[scanPortCount++]=p;
+}
+int findPort(int p){ for(int i=0;i<scanPortCount;i++) if(scanPorts[i]==p) return i; return -1; }
+void addPort(int p){ if(p>0&&p<=65535&&scanPortCount<MAX_PORTS&&findPort(p)<0) scanPorts[scanPortCount++]=p; }
+void sortPorts(){
+  for(int i=1;i<scanPortCount;i++){ uint16_t k=scanPorts[i]; int j=i-1;
+    while(j>=0&&scanPorts[j]>k){ scanPorts[j+1]=scanPorts[j]; j--; } scanPorts[j+1]=k; }
+}
+void savePorts(){
+  sortPorts(); String s;
+  for(int i=0;i<scanPortCount;i++){ if(i)s+=","; s+=String(scanPorts[i]); }
+  prefs.begin("scan",false); prefs.putString("ports",s); prefs.end();
+}
+void loadPorts(){
+  prefs.begin("scan",true); String s=prefs.getString("ports","(none)"); prefs.end();
+  if(s=="(none)"){ resetPorts(); return; }   // first boot -> defaults
+  scanPortCount=0; int st=0;
+  while(st<s.length()&&scanPortCount<MAX_PORTS){
+    int c=s.indexOf(',',st); if(c<0)c=s.length();
+    addPort(s.substring(st,c).toInt()); st=c+1;
+  }
+}
+String portsJson(){
+  sortPorts(); String j="[";
+  for(int i=0;i<scanPortCount;i++){ if(i)j+=","; j+=String(scanPorts[i]); }
+  return j+"]";
+}
+void handlePorts(){ server.send(200,"application/json","{\"ports\":"+portsJson()+"}"); }
+void handlePortsAdd(){
+  String s=server.arg("ports"); s.replace(","," "); int st=0;
+  while(st<s.length()){
+    while(st<s.length()&&s[st]==' ')st++;
+    int e=st; while(e<s.length()&&s[e]!=' ')e++;
+    if(e>st) addPort(s.substring(st,e).toInt());
+    st=e;
+  }
+  savePorts(); handlePorts();
+}
+void handlePortsDel(){
+  int p=server.arg("p").toInt(), i=findPort(p);
+  if(i>=0){ for(int k=i;k<scanPortCount-1;k++)scanPorts[k]=scanPorts[k+1]; scanPortCount--; savePorts(); }
+  handlePorts();
+}
+void handlePortsClear(){ scanPortCount=0; savePorts(); handlePorts(); }
+void handlePortsReset(){ resetPorts(); savePorts(); handlePorts(); }
+
+// TCP connect scan of the configured ports on one host. Saves open ports to the inventory.
 void handlePortscan(){
   String ipStr=server.arg("ip");
   IPAddress ip;
   if(!ip.fromString(ipStr)){ server.send(200,"application/json","{\"error\":\"bad ip\"}"); return; }
 
-  static const uint16_t PORTS[]={21,22,23,25,53,80,110,135,139,143,443,445,
-                                 554,587,993,995,1723,3306,3389,5900,8080,8443};
-  const int NP=sizeof(PORTS)/sizeof(PORTS[0]);
+  int NP=scanPortCount;
   setLED(140,0,255,8);
   screenMode=SCR_SCAN;
   sprBegin("PORT SCAN");               // sniffing-dog animation
@@ -744,15 +850,15 @@ void handlePortscan(){
   bool first=true;
   for(int i=0;i<NP;i++){
     WiFiClient c;
-    if(c.connect(ip,PORTS[i],250)){
+    if(c.connect(ip,scanPorts[i],250)){
       if(!first)j+=","; first=false;
-      j+=String(PORTS[i]);
-      open += (open.length()?" ":"") + String(PORTS[i]);
+      j+=String(scanPorts[i]);
+      open += (open.length()?" ":"") + String(scanPorts[i]);
       c.stop();
     }
     sprTick();
   }
-  j+="]}";
+  j+="],\"scanned\":"+String(NP)+",\"ports\":"+portsJson()+"}";
 
   String net = WiFi.status()==WL_CONNECTED ? WiFi.SSID() : String("(local)");
   setHostPorts(net, ipStr, open);
@@ -874,7 +980,8 @@ void setup(){
   loadSaved();
   loadHosts();
   loadWaps();
-  Serial.printf("Loaded %d saved net(s), %d host(s), %d wap(s)\n", savedCount, hostCount, wapCount);
+  loadPorts();
+  Serial.printf("Loaded %d saved net(s), %d host(s), %d wap(s), %d port(s)\n", savedCount, hostCount, wapCount, scanPortCount);
   bhFillTo(50);
 
   WiFi.mode(WIFI_AP_STA);
@@ -904,9 +1011,16 @@ void setup(){
   server.on("/clearwaps",HTTP_POST,handleClearWaps);
   server.on("/joinsaved",handleJoinSaved);
   server.on("/status",handleStatus);
+  server.on("/orient",HTTP_POST,handleOrient);
+  server.on("/ports",handlePorts);
+  server.on("/portsadd",HTTP_POST,handlePortsAdd);
+  server.on("/portsdel",HTTP_POST,handlePortsDel);
+  server.on("/portsclear",HTTP_POST,handlePortsClear);
+  server.on("/portsreset",HTTP_POST,handlePortsReset);
   server.onNotFound(handleRoot);
   server.begin();
 
+  loadOrientation();                 // apply saved orientation now (boot used landscape)
   screenMode=SCR_HOME; screenDirty=true;
 }
 
@@ -926,7 +1040,7 @@ void loop(){
   // twice a second and repaint a field only if it actually changed.
   static uint32_t lastCheck=0;
   if(screenMode==SCR_HOME){
-    if(screenDirty){ screenDirty=false; drawHomeStatic(); updateHome(true); lastCheck=millis(); }
+    if(screenDirty){ screenDirty=false; updateHome(true); lastCheck=millis(); }
     else if(millis()-lastCheck>500){ lastCheck=millis(); updateHome(false); }
   }
   delay(5);

@@ -86,6 +86,21 @@ label{display:block;margin:14px 0 4px;color:var(--mute);font-size:.68rem;letter-
 .rowbtns svg{width:15px;height:15px}
 .rowbtns button:hover{filter:brightness(1.3)}
 @media (hover:hover) and (pointer:fine){.rowbtns{display:flex}}
+.orient{display:flex;gap:8px;margin-top:8px}
+.orient button{flex:1;padding:12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;text-transform:uppercase;letter-spacing:.1em;font-size:.78rem;cursor:pointer;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+.orient .obtn.on{background:var(--red);border-color:var(--red);color:#1a0406;font-weight:700;box-shadow:var(--glow)}
+.orient .ibtn{color:var(--dim);border-color:var(--line)}
+.orient .ibtn.on{color:var(--red2);border-color:var(--red);box-shadow:var(--glow);text-shadow:0 0 6px rgba(255,92,92,.7)}
+.collap{cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.caret{color:var(--red2);transition:transform .15s;font-size:.8rem}
+.collap.closed .caret{transform:rotate(-90deg)}
+.collapsed{display:none}
+.netgroup{margin-bottom:4px}
+.nethdr{font-size:.74rem;letter-spacing:.16em;text-transform:uppercase;color:var(--cyan);border-left:3px solid var(--cyan);margin:10px 0 6px;padding-left:9px}
+.pchip{cursor:pointer}
+.report{margin-top:8px;border-left:2px solid var(--line);padding-left:10px}
+.report b{color:var(--ink)}
+#dbSearch{margin-bottom:10px}
 #addBox{display:none;margin-top:10px}
 /* results drawer */
 .sheetbg{position:fixed;inset:0;background:rgba(0,0,0,.65);opacity:0;pointer-events:none;transition:opacity .2s;z-index:20}
@@ -129,6 +144,25 @@ label{display:block;margin:14px 0 4px;color:var(--mute);font-size:.68rem;letter-
     <p class="hint">Tap a row to join with its stored password. Swipe left to delete. Arrows set auto-join priority (top = first).</p>
     <div id="joinMsg" class="hint"></div>
     <div id="savedList"><p class="hint">Loading...</p></div>
+    <h3>Screen orientation</h3>
+    <p class="hint">Landscape toggles to portrait (USB end up, reads left-to-right). Invert flips 180&deg;; it glows red when on.</p>
+    <div class="orient">
+      <button class="obtn" id="btnOrient" onclick="toggleOrient()">Landscape</button>
+      <button class="ibtn" id="btnInvert" onclick="toggleInvert()">Invert</button>
+    </div>
+    <h3 class="collap closed" onclick="toggleSec(this,'secPcfg')">Port Scanner config<span class="caret">&#9656;</span></h3>
+    <div id="secPcfg" class="section collapsed">
+      <p class="hint">Ports the Port Scanner checks. Tap a port to remove it.</p>
+      <div id="portChips"></div>
+      <label for="addPorts">Add ports (comma or space separated)</label>
+      <input id="addPorts" placeholder="e.g. 8000 8443 9090">
+      <div class="orient" style="margin-top:8px">
+        <button class="btn small" onclick="addPortsCfg()">Add</button>
+        <button class="btn ghost small" onclick="resetPortsCfg()">Reset default</button>
+        <button class="btn danger small" onclick="clearPortsCfg()">Clear all</button>
+      </div>
+    </div>
+    <h3>Saved networks actions</h3>
     <button class="btn ghost" onclick="toggleAdd()">+ Add a new network</button>
     <div id="addBox">
       <button class="btn ghost" onclick="loadFull()">Show nearby networks</button>
@@ -143,13 +177,18 @@ label{display:block;margin:14px 0 4px;color:var(--mute);font-size:.68rem;letter-
   </section>
 
   <section id="database" class="view">
-    <p class="hint">Everything the tools found. Swipe left to delete, swipe right to add a friendly name &amp; notes.</p>
-    <h3>Access points</h3>
-    <div id="wapDb"></div>
-    <button class="btn danger small" onclick="clearDb('wap')">Clear access points</button>
-    <h3>Hosts</h3>
-    <div id="hostDb"></div>
-    <button class="btn danger small" onclick="clearDb('host')">Clear hosts</button>
+    <p class="hint">Everything the tools found. Swipe left to delete, swipe right (or desktop buttons) to edit. Tap a header to collapse.</p>
+    <input id="dbSearch" oninput="filterDb()" placeholder="filter ip / ssid / mac / name / notes">
+    <h3 class="collap" onclick="toggleSec(this,'secWap')">Access points<span class="caret">&#9662;</span></h3>
+    <div id="secWap" class="section">
+      <div id="wapDb"></div>
+      <button class="btn danger small" onclick="clearDb('wap')">Clear access points</button>
+    </div>
+    <h3 class="collap" onclick="toggleSec(this,'secHost')">Hosts<span class="caret">&#9662;</span></h3>
+    <div id="secHost" class="section">
+      <div id="hostDb"></div>
+      <button class="btn danger small" onclick="clearDb('host')">Clear hosts</button>
+    </div>
   </section>
 </main>
 
@@ -177,12 +216,24 @@ function bars(r){var n=r>-60?4:r>-70?3:r>-80?2:1;var f='';for(var i=0;i<4;i++)f+
 function show(v){var m={hunt:'tHunt',settings:'tSet',database:'tDb'};
   for(var id in m){document.getElementById(id).classList.toggle('active',id==v);
     document.getElementById(m[id]).classList.toggle('active',id==v);}
-  if(v=='settings')loadSaved(); if(v=='database')loadDb(); if(v=='hunt')populateIpList();}
+  if(v=='settings'){loadSaved();loadPortsCfg();} if(v=='database')loadDb(); if(v=='hunt')populateIpList();}
+var curPortrait=false,curInvert=false;
+function applyOrientBtns(){
+  var o=document.getElementById('btnOrient'),i=document.getElementById('btnInvert');
+  if(o){o.textContent=curPortrait?'Portrait mode':'Landscape';o.classList.toggle('on',curPortrait);}
+  if(i){i.classList.toggle('on',curInvert);}
+}
+function sendOrient(){
+  fetch('/orient',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'portrait='+(curPortrait?1:0)+'&invert='+(curInvert?1:0)}).then(r=>r.json()).then(d=>{curPortrait=!!d.portrait;curInvert=!!d.invert;applyOrientBtns();}).catch(function(){});
+}
+function toggleOrient(){curPortrait=!curPortrait;applyOrientBtns();sendOrient();}
+function toggleInvert(){curInvert=!curInvert;applyOrientBtns();sendOrient();}
 function refreshStatus(){
   fetch('/status').then(r=>r.json()).then(d=>{var ok=d.connected;
     document.getElementById('status').innerHTML='<span class="dot" style="color:'+(ok?'#48e06a':'var(--mute)')+'"></span>'+
       (ok?'ONLINE // <b>'+esc(d.ssid)+'</b> // '+d.ip:'AP ONLY')+
       '<br><span class="muted">AP '+esc(d.ap)+' // 192.168.4.1 // '+d.clients+' client(s) // store:'+d.storage+'</span>';
+    if(typeof d.portrait!=='undefined'){curPortrait=!!d.portrait;curInvert=!!d.invert;applyOrientBtns();}
   }).catch(()=>{});
 }
 /* ---------- results drawer ---------- */
@@ -223,10 +274,20 @@ function portScanner(){
   openSheet('Port Scanner','<p><span class="spin"></span>Scanning '+esc(ip)+'...</p>');
   fetch('/portscan?ip='+encodeURIComponent(ip)).then(r=>r.json()).then(d=>{
     if(d.error){setSheet('<p class="bad">'+esc(d.error)+'</p>');return;}
-    var body='<p class="hint">'+esc(ip)+' &middot; saved to Database.</p>';
-    body+= d.open.length? ('<div>'+d.open.map(p=>'<span class="port">'+p+'</span>').join('')+'</div>')
-                        : '<p class="muted">No common ports open.</p>';
-    setSheet(body+dbLink);
+    var openC=d.open.length, scanned=d.scanned||0, allp=(d.ports||[]);
+    var oset={}; d.open.forEach(function(p){oset[p]=1;});
+    var closed=allp.filter(function(p){return !oset[p];});
+    var body='<p class="hint">'+esc(ip)+' &middot; '+openC+' open / '+scanned+' scanned &middot; saved to Database.</p>';
+    body+= openC? ('<div>'+d.open.map(p=>'<span class="port">'+p+'</span>').join('')+'</div>')
+                : '<p class="muted">No open ports.</p>';
+    var report='<button class="btn ghost small closed" style="margin-top:14px" onclick="toggleReport(this)">Full report<span class="caret">&#9656;</span></button>'+
+      '<div class="report collapsed">'+
+        '<div class="meta2">Target '+esc(ip)+'</div>'+
+        '<div class="meta2">Scanned '+scanned+' &middot; '+openC+' open &middot; '+closed.length+' closed/filtered</div>'+
+        '<div style="margin-top:6px"><b>Open</b><br>'+(openC?d.open.map(p=>'<span class="port">'+p+'</span>').join(''):'<span class="noports">none</span>')+'</div>'+
+        '<div style="margin-top:6px"><b>Closed / filtered</b><br>'+(closed.length?closed.map(p=>'<span class="port" style="color:var(--dim);border-color:var(--line)">'+p+'</span>').join(''):'<span class="noports">none</span>')+'</div>'+
+      '</div>';
+    setSheet(body+report+dbLink);
   }).catch(()=>setSheet('<p class="bad">Scan failed.</p>'));
 }
 /* ---------- swipe helper ---------- */
@@ -318,26 +379,42 @@ function connect(){
 }
 /* ---------- Database ---------- */
 function loadDb(){loadWapDb();loadHostDb();}
+function toggleSec(h,id){document.getElementById(id).classList.toggle('collapsed');h.classList.toggle('closed');}
+function toggleGroup(h){h.nextElementSibling.classList.toggle('collapsed');h.classList.toggle('closed');}
+function toggleReport(b){b.nextElementSibling.classList.toggle('collapsed');b.classList.toggle('closed');}
+function filterDb(){
+  var box=document.getElementById('dbSearch');var t=box?box.value.toLowerCase():'';
+  document.querySelectorAll('#wapDb .dbrow').forEach(function(r){
+    r.style.display=(!t||r.textContent.toLowerCase().indexOf(t)>=0)?'':'none';});
+  document.querySelectorAll('#hostDb .netgroup').forEach(function(g){
+    var hdr=g.querySelector('.nethdr'); var hmatch=hdr&&hdr.textContent.toLowerCase().indexOf(t)>=0; var any=false;
+    g.querySelectorAll('.dbrow').forEach(function(r){
+      var show=!t||hmatch||r.textContent.toLowerCase().indexOf(t)>=0;
+      r.style.display=show?'':'none'; if(show)any=true;});
+    g.style.display=any?'':'none';});
+}
 function loadWapDb(){
   var el=document.getElementById('wapDb');el.innerHTML='<p><span class="spin"></span>...</p>';
   fetch('/waps').then(r=>r.json()).then(list=>{
     if(!list.length){el.innerHTML='<p class="hint">No access points saved. Run WAP Sniffer.</p>';return;}
     el.innerHTML=list.map(w=>dbRow('wap',w.ssid,'',esc(w.ssid),'ch '+w.ch+' // '+w.enc+' // '+w.rssi+' dBm // +'+w.seen+'s',w.name,w.note)).join('');
-    wireDb(el,'wap');
+    wireDb(el,'wap'); filterDb();
   }).catch(()=>{el.innerHTML='<p class="bad">Could not read access points.</p>';});
 }
 function loadHostDb(){
   var el=document.getElementById('hostDb');el.innerHTML='<p><span class="spin"></span>...</p>';
   fetch('/hosts').then(r=>r.json()).then(list=>{
     if(!list.length){el.innerHTML='<p class="hint">No hosts saved. Run ARP Sweeper.</p>';return;}
-    var html='',cur=null;
+    var html='',cur=null,rows='';
+    function flush(){ if(cur!==null){ html+='<div class="netgroup"><h4 class="nethdr collap" onclick="toggleGroup(this)">'+esc(cur||'(unknown)')+'<span class="caret">&#9662;</span></h4><div class="netbody">'+rows+'</div></div>'; rows=''; } }
     list.forEach(function(h){
-      if(h.net!==cur){cur=h.net;html+='<h3>'+esc(cur||'(unknown)')+'</h3>';}
+      if(h.net!==cur){ flush(); cur=h.net; }
       var ports=h.ports?h.ports.split(' ').map(p=>'<span class="port">'+esc(p)+'</span>').join(''):'<span class="noports">not scanned</span>';
       var meta=esc(h.mac||'--')+' // +'+h.seen+'s<div style="margin-top:4px">'+ports+'</div>';
-      html+=dbRow('host',h.net,h.ip,h.ip,meta,h.name,h.note);
+      rows+=dbRow('host',h.net,h.ip,h.ip,meta,h.name,h.note);
     });
-    el.innerHTML=html; wireDb(el,'host');
+    flush();
+    el.innerHTML=html; wireDb(el,'host'); filterDb();
   }).catch(()=>{el.innerHTML='<p class="bad">Could not read hosts.</p>';});
 }
 function dbRow(kind,k1,k2,title,meta,name,note){
@@ -378,6 +455,12 @@ function clearDb(kind){
   if(!confirm('Delete ALL saved '+(kind=='wap'?'access points':'hosts')+'?'))return;
   fetch(kind=='wap'?'/clearwaps':'/clearhosts',{method:'POST'}).then(()=>loadDb());
 }
+function renderPorts(d){var el=document.getElementById("portChips");if(!el)return;var ps=(d&&d.ports)||[];el.innerHTML=ps.length?ps.map(function(p){return '<span class="port pchip" title="remove" onclick="delPortCfg('+p+')">'+p+' &times;</span>';}).join(""):'<span class="noports">no ports set</span>';}
+function loadPortsCfg(){fetch("/ports").then(r=>r.json()).then(renderPorts).catch(function(){});}
+function addPortsCfg(){var v=document.getElementById("addPorts").value.trim();if(!v)return;fetch("/portsadd",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"ports="+encodeURIComponent(v)}).then(r=>r.json()).then(function(d){document.getElementById("addPorts").value="";renderPorts(d);});}
+function delPortCfg(p){fetch("/portsdel",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"p="+p}).then(r=>r.json()).then(renderPorts);}
+function clearPortsCfg(){if(!confirm("Clear ALL scan ports?"))return;fetch("/portsclear",{method:"POST"}).then(r=>r.json()).then(renderPorts);}
+function resetPortsCfg(){fetch("/portsreset",{method:"POST"}).then(r=>r.json()).then(renderPorts);}
 refreshStatus();populateIpList();setInterval(refreshStatus,4000);
 </script>
 </body></html>)HTML";
