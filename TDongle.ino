@@ -125,7 +125,7 @@ void lcdInit(){
 void setOrientation(bool portrait, bool inverted){
   isPortrait=portrait; isInverted=inverted;
   if(!portrait){ scrW=160; scrH=80; xOff=1;  yOff=26; madctl=inverted?0x68:0xA8; }
-  else         { scrW=80;  scrH=160; xOff=26; yOff=1;  madctl=inverted?0x48:0x88; }
+  else         { scrW=80;  scrH=160; xOff=26; yOff=1;  madctl=inverted?0xC8:0x08; }
   writeCmd(0x36); writeData1(madctl);
 }
 
