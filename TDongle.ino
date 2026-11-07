@@ -36,6 +36,7 @@
 #include "lwip/tcpip.h"      // LOCK_TCPIP_CORE() — lwIP must be touched with the core lock held
 #include "index_html.h"      // web page (PROGMEM raw string)
 #include "bh_image.h"        // bloodhound boot-splash bitmap
+#include "bh_sprite.h"       // bloodhound walk/sniff sprite (4 frames)
 
 // ================= AP credentials =================
 const char *AP_SSID = "BL00DH0UND";
@@ -94,6 +95,7 @@ void fillRect(int x,int y,int w,int h,uint16_t color){
   if(x>=LCD_W||y>=LCD_H||w<=0||h<=0)return;
   if(x<0){w+=x;x=0;}if(y<0){h+=y;y=0;}
   if(x+w>LCD_W)w=LCD_W-x;if(y+h>LCD_H)h=LCD_H-y;
+  if(w<=0||h<=0)return;              // fully clipped off-screen -> nothing to draw
   setWindow(x,y,x+w-1,y+h-1);
   uint32_t n=(uint32_t)w*h;
   digitalWrite(PIN_LCD_CS,LOW);SPI.beginTransaction(lcdSPI);
@@ -196,6 +198,33 @@ void bhFillTo(int pct){          // animate red waterline up to pct
 }
 // Reset + draw the dog fresh, for reuse as a "busy/loading" splash.
 void bhBegin(){ bhCur=0; bhWaterTop=BH_Y+BH_H; bhDrawBase(); }
+
+// ---- Sniffing walk animation (used while scanning) ----
+static inline bool sprInk(int f,int x,int by){
+  uint8_t b=pgm_read_byte(&SPR_BITMAP[f][by*SPR_BYTES_PER_ROW+(x>>3)]);
+  return (b>>(7-(x&7)))&1;
+}
+void drawSprite(int f,int x){              // red dog frame f, left edge at x
+  for(int by=0;by<SPR_H;by++){
+    int sy=SPR_Y+by, cx=0;
+    while(cx<SPR_W){
+      if(sprInk(f,cx,by)){ int s=cx; while(cx<SPR_W && sprInk(f,cx,by)) cx++; fillRect(x+s,sy,cx-s,1,C_RED); }
+      else cx++;
+    }
+  }
+}
+int sprX=160, sprFrame=0;
+void sprBegin(const char *label){
+  fillScreen(C_BLACK);
+  drawText(4,2,label,C_RED,C_BLACK,1);
+  sprX=160; sprFrame=0;
+}
+void sprTick(){                            // advance one frame, dog trots right->left
+  fillRect(0,SPR_Y,160,SPR_H,C_BLACK);     // clear just the sprite band
+  drawSprite(sprFrame&3, sprX);
+  sprX-=7; if(sprX < -SPR_W) sprX=160;     // wrap around
+  sprFrame++;
+}
 
 // ================= Saved-network store =================
 #define MAX_SAVED 12
@@ -372,8 +401,14 @@ int rssiFor(const String &ssid){            // from the most recent scan buffer
 // ================= Route handlers =================
 void handleRoot(){ server.send_P(200,"text/html",INDEX_HTML); }
 
-void handleScan(){                           // WAP Sniffer: full list, blue LED, saved to DB
-  int n=runScan(true);
+void handleScan(){                           // WAP Sniffer: animated sniff while scanning
+  setLED(0,0,255,8); scanLedActive=true; scanLedUntil=millis()+8000;
+  screenMode=SCR_SCAN;
+  sprBegin("WIFI SNIFF");
+  WiFi.scanNetworks(true,true);              // async so we can animate while it runs
+  int n;
+  while((n=WiFi.scanComplete())==WIFI_SCAN_RUNNING){ sprTick(); delay(70); }
+  if(n<0) n=0;
   String j="[";
   for(int i=0;i<n;i++){ if(i)j+=",";
     String ssid=WiFi.SSID(i); String enc=encName(WiFi.encryptionType(i));
@@ -386,6 +421,7 @@ void handleScan(){                           // WAP Sniffer: full list, blue LED
   saveWaps();
   server.send(200,"application/json",j);
   WiFi.scanDelete();
+  screenMode=SCR_HOME; screenDirty=true;
 }
 
 void handleSaved(){                          // saved list + availability (quiet scan)
@@ -665,7 +701,7 @@ void handleArp(){
   IPAddress self=WiFi.localIP();
   setLED(140,0,255,8);                 // purple = discovery
   screenMode=SCR_SCAN;                 // keep loop from redrawing home
-  bhBegin();                           // bloodhound loading splash
+  sprBegin("ARP SWEEP");               // sniffing-dog animation
   discCount=0;
 
   for(int host=1; host<=254; host++){
@@ -673,11 +709,10 @@ void handleArp(){
     ip4_addr_t t; IP4_ADDR(&t, self[0],self[1],self[2],host);
     LOCK_TCPIP_CORE(); etharp_request(nif,&t); UNLOCK_TCPIP_CORE();
     delay(3);
-    if(host%16==0){ drainArpTable(); bhFillTo(host*100/254); }
+    if(host%10==0){ drainArpTable(); sprTick(); }
   }
-  delay(500);
+  delay(400);
   drainArpTable();
-  bhFillTo(100);
 
   for(int i=0;i<discCount;i++) upsertHost(net, discIp[i], discMac[i]);
   saveHosts();
@@ -702,7 +737,7 @@ void handlePortscan(){
   const int NP=sizeof(PORTS)/sizeof(PORTS[0]);
   setLED(140,0,255,8);
   screenMode=SCR_SCAN;
-  bhBegin();                           // bloodhound loading splash
+  sprBegin("PORT SCAN");               // sniffing-dog animation
 
   String open="";
   String j="{\"ip\":\""+ipStr+"\",\"open\":[";
@@ -715,7 +750,7 @@ void handlePortscan(){
       open += (open.length()?" ":"") + String(PORTS[i]);
       c.stop();
     }
-    bhFillTo((i+1)*100/NP);
+    sprTick();
   }
   j+="]}";
 

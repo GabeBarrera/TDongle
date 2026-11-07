@@ -79,6 +79,13 @@ label{display:block;margin:14px 0 4px;color:var(--mute);font-size:.68rem;letter-
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--red);border-radius:50%;animation:s .7s linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes s{to{transform:rotate(360deg)}}
 .hint{color:var(--mute);font-size:.72rem;margin-top:8px}
+.rowbtns{display:none;gap:5px;margin-left:8px;flex:0 0 auto}
+.rowbtns button{width:32px;height:32px;border:1px solid var(--line);background:#0a0810;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.rowbtns .edit{color:var(--cyan);border-color:#15424a}
+.rowbtns .del{color:var(--red2);border-color:var(--deep)}
+.rowbtns svg{width:15px;height:15px}
+.rowbtns button:hover{filter:brightness(1.3)}
+@media (hover:hover) and (pointer:fine){.rowbtns{display:flex}}
 #addBox{display:none;margin-top:10px}
 /* results drawer */
 .sheetbg{position:fixed;inset:0;background:rgba(0,0,0,.65);opacity:0;pointer-events:none;transition:opacity .2s;z-index:20}
@@ -113,7 +120,8 @@ label{display:block;margin:14px 0 4px;color:var(--mute);font-size:.68rem;letter-
       <button class="btn" onclick="portScanner()">Port Scanner</button>
     </div>
     <label for="hunttarget">Port Scanner target IP</label>
-    <input id="hunttarget" placeholder="e.g. 192.168.1.1 (or tap a host in Database)">
+    <input id="hunttarget" list="iplist" placeholder="e.g. 192.168.1.1 (type or pick a known host)">
+    <datalist id="iplist"></datalist>
   </section>
 
   <section id="settings" class="view">
@@ -152,11 +160,24 @@ label{display:block;margin:14px 0 4px;color:var(--mute);font-size:.68rem;letter-
 </div>
 <script>
 function esc(s){return (s||'').replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+var SVG_EDIT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18.5 9.5l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>';
+var SVG_DEL='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></svg>';
+var ROWBTN='<div class="rowbtns"><button class="noswipe edit" title="Edit" onclick="editRow(this)">'+SVG_EDIT+'</button><button class="noswipe del" title="Delete" onclick="delRow(this)">'+SVG_DEL+'</button></div>';
+function editRow(b){b.closest('.dbrow').querySelector('.editpanel').classList.toggle('show');}
+function delRow(b){var r=b.closest('.dbrow');delDb(r.dataset.kind,r.dataset.k1,r.dataset.k2);}
+function populateIpList(){
+  fetch('/hosts').then(r=>r.json()).then(list=>{
+    var ips={};(window.lastArpIps||[]).forEach(function(ip){ips[ip]=1;});
+    list.forEach(function(h){ips[h.ip]=1;});
+    var dl=document.getElementById('iplist');
+    if(dl)dl.innerHTML=Object.keys(ips).sort().map(function(ip){return '<option value="'+ip+'">';}).join('');
+  }).catch(function(){});
+}
 function bars(r){var n=r>-60?4:r>-70?3:r>-80?2:1;var f='';for(var i=0;i<4;i++)f+=i<n?'|':'.';return f;}
 function show(v){var m={hunt:'tHunt',settings:'tSet',database:'tDb'};
   for(var id in m){document.getElementById(id).classList.toggle('active',id==v);
     document.getElementById(m[id]).classList.toggle('active',id==v);}
-  if(v=='settings')loadSaved(); if(v=='database')loadDb();}
+  if(v=='settings')loadSaved(); if(v=='database')loadDb(); if(v=='hunt')populateIpList();}
 function refreshStatus(){
   fetch('/status').then(r=>r.json()).then(d=>{var ok=d.connected;
     document.getElementById('status').innerHTML='<span class="dot" style="color:'+(ok?'#48e06a':'var(--mute)')+'"></span>'+
@@ -189,6 +210,7 @@ function arpSweeper(){
     if(d.error){setSheet('<p class="bad">'+esc(d.error)+'</p>');return;}
     var h=d.hosts||[];
     if(!h.length){setSheet('<p class="hint">No hosts answered.</p>'+dbLink);return;}
+    window.lastArpIps=h.map(function(x){return x.ip;});populateIpList();
     setSheet('<p class="hint">'+h.length+' host(s) on '+esc(d.net||d.self)+' &middot; saved to Database.</p>'+
       h.map(x=>'<div class="net pick" onclick="setTarget(\''+x.ip+'\')"><div class="nm">'+x.ip+
       '</div><div class="meta">'+x.mac+'</div></div>').join('')+dbLink);
@@ -324,7 +346,7 @@ function dbRow(kind,k1,k2,title,meta,name,note){
   return '<div class="dbrow" data-kind="'+kind+'" data-k1="'+esc(k1)+'" data-k2="'+esc(k2)+'">'+
     '<div class="rowwrap"><span class="hintL">delete &raquo;</span><span class="hintR">&laquo; edit</span>'+
     '<div class="rowmain"><div style="min-width:0"><div><span class="ipn">'+title+'</span>'+fn+'</div>'+
-    '<div class="meta2">'+meta+'</div>'+nt+'</div></div></div>'+
+    '<div class="meta2">'+meta+'</div>'+nt+'</div>'+ROWBTN+'</div></div>'+
     '<div class="editpanel"><input class="ename" placeholder="friendly name" value="'+esc(name)+'">'+
     '<input class="enote" placeholder="notes / description" value="'+esc(note)+'">'+
     '<button class="btn small noswipe" onclick="saveMeta(this)">Save</button></div></div>';
@@ -356,6 +378,6 @@ function clearDb(kind){
   if(!confirm('Delete ALL saved '+(kind=='wap'?'access points':'hosts')+'?'))return;
   fetch(kind=='wap'?'/clearwaps':'/clearhosts',{method:'POST'}).then(()=>loadDb());
 }
-refreshStatus();setInterval(refreshStatus,4000);
+refreshStatus();populateIpList();setInterval(refreshStatus,4000);
 </script>
 </body></html>)HTML";
